@@ -3,7 +3,7 @@ type type_t =
   | Int_t
   | Fun_t of type_t * type_t
 
-type name = Name of string
+type name = string
 
 type binding = name * type_t
 
