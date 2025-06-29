@@ -2,7 +2,7 @@
  * The idea is that the AST should contain all the structural info,
  * but while building it from the cst, we do arity and type checking,
  * and associate variable references to slots in binding scopes.
- **)
+ * *)
 
 type name = Cst.name
 
