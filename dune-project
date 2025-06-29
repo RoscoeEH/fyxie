@@ -1,5 +1,4 @@
 (lang dune 3.3)
-(using ocamlformat 0.26.1)
 
 (name TBD)
 

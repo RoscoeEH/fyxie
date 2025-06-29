@@ -1,2 +1,3 @@
 (library
- (name TBD))
+ (name TBD)
+ (modules cst ast))

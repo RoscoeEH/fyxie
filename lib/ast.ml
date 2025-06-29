@@ -9,40 +9,16 @@ type name = Cst.name
 type type_t = Cst.type_t
 
 type binding = {
-  name : name
-  tp : type_t
+  name : name;
+  tp : type_t;
   slot : int
 }
 
 type v_ref = {
-  name : name
-  tp : type_t
-  scope_depth : int             (* 0 for closest scope *)
+  name : name;
+  tp : type_t;
+  scope_depth : int;             (* 0 for closest scope *)
   slot : int
-}
-
-type func = {
-  n_slots : int
-  arity : int
-  args : binding list
-  captures : binding list
-  body : expr
-}
-
-type let_block = {
-  n_slots : int
-  binds : binding list
-  body : expr
-}
-
-type application = {
-  func : expr
-  args : expr list
-}
-
-type literal = {
-  tp : type_t
-  value : int
 }
 
 type expr =
@@ -51,3 +27,29 @@ type expr =
   | Var of v_ref
   | App of application
   | Lit of literal
+
+
+and func = {
+  f_slots : int;
+  arity : int;
+  f_args : binding list;
+  captures : binding list;
+  body : expr
+}
+
+and let_block = {
+  lb_slots : int;
+  binds : binding list;
+  lb_body : expr
+}
+
+and application = {
+  func : expr;
+  a_args : expr list
+}
+
+and literal = {
+  tp : type_t;
+  value : int;
+}
+
