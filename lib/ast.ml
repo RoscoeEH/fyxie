@@ -116,16 +116,14 @@ let lookup_name name (scopes : binding list list) =
           | Right (b, slot_idx) -> Right (b, scope_idx, slot_idx) in
   lookup_name1 name scopes 0
 
-(* TODO aint no way I have to define this from scratch. This is
-'sequence :: [Either a b] -> Either a [b]' from haskell, a general
-monad thing. *)
-let rec sequence lst = match lst with
-  | [] -> Right []
-  | h :: t -> match h with
-      | Left a -> Left a
-      | Right a -> match sequence t with
-          | Left v -> Left v
-          | Right st -> Right (a :: st)
+(* Collects Ok values, stops on an Error *)
+let sequence lst =
+  let rec helper ok_vals remaining = match remaining with
+    | [] -> Ok (List.rev ok_vals)
+    | Error e :: _ -> Error e
+    | Ok x :: xs -> helper (x :: ok_vals) xs
+  in
+  helper [] lst
 
 (* TODO this is a huge mess. like 95% of the complexity is
  * here. Basically this takes a CST expr and makes an AST expr out of
