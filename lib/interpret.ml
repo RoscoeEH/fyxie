@@ -39,25 +39,8 @@ module OM = struct
 end
 open OM
 
-(*
- * module Interpreted : BC = struct
- *)
-type bc_op =
-  | PushLit of int
-  | ResStack of int
-  | FetchSp of int
-  | SetSp of int
-  | Dup
-  | Alloc of int
-  | Fetch of int
-  | Set of int
-  | Call
-  | Ret
-type slot =
-  | Num of int
-  | Op of bc_op
-type 'a ctx = 'a
-
+module Interpreter = struct
+include Bytecode
 
 let is_pointer s = match s with
   | Op _ -> false
@@ -81,21 +64,6 @@ let to_slot op = Op op
 let to_opcode slot = match slot with
   | Num _ -> none
   | Op o -> some o
-
-let push_lit n = PushLit n
-let reserve_stack n = ResStack n
-let fetch_stack n = FetchSp n
-let set_stack_x n = SetSp n
-let dup_x = fetch_stack 0
-let alloc n = Alloc n
-let fetch_x n = Fetch n
-let set_x_y n = Set n
-let call_x = Call
-let return_x = Ret
-(*
- * end
- *)
-
 
 (* internal details of interpreted memory and garbage collection *)
 let mem_size = 4096           (* in slots *)
@@ -174,3 +142,5 @@ let bump_maybe_gc n =
  * actually walk the tree and do things live? I'm sort of leaning
  * towards compiled since I think that will be easier and also what we
  * want in the longer term. *)
+
+end

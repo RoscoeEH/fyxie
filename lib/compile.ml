@@ -9,3 +9,6 @@
  * have the IR output be abstracted over the internal details of the
  * bytecode.
  *)
+
+open Ast
+open Interpret.Interpreter
