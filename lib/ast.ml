@@ -13,7 +13,7 @@
  * tree every time I want to do things, since it's miserable for cache
  * coherency and frankly a kinda boring way to design a program. *)
 
-open Either
+open Result
 open List
 
 type name = string
@@ -102,18 +102,18 @@ let rec names (scopes : Cst.binding list list) expr =
 
 let matching_binding n (scope : binding list) =
   let rec matching_binding1 n (scope : binding list) idx = match scope with
-      | [] -> Left ()
-      | b :: tail -> if n == b.name then Right (b, idx) else matching_binding1 n tail (idx+1)
+       | [] -> Error ()
+      | b :: tail -> if n == b.name then Ok (b, idx) else matching_binding1 n tail (idx+1)
   in matching_binding1 n scope 0
 
 (* fetch a binding from a scope, and return it along with some indexing info *)
 let lookup_name name (scopes : binding list list) =
   let rec lookup_name1 name (scopes : binding list list) scope_idx = match scopes with
-      | [] -> Left ()
+      | [] -> Error ()
       | s :: s_tail ->
           match matching_binding name s with
-          | Left _ -> lookup_name1 name s_tail (scope_idx+1)
-          | Right (b, slot_idx) -> Right (b, scope_idx, slot_idx) in
+          | Error _ -> lookup_name1 name s_tail (scope_idx+1)
+          | Ok (b, slot_idx) -> Ok (b, scope_idx, slot_idx) in
   lookup_name1 name scopes 0
 
 (* Collects Ok values, stops on an Error *)
@@ -164,8 +164,8 @@ let rec from_cst (scopes : binding list list) (free_list : name list) (expr : Cs
            | _ -> raise (Failure "Application with non-function object"))
       | Cst.Var name ->
         (match lookup_name (from_cst_name name) scopes with
-           | Left _ -> raise (Failure "test")
-           | Right (b, scope_idx, slot_idx) ->
+           | Error _ -> raise (Failure "test")
+           | Ok (b, scope_idx, slot_idx) ->
              let lifted_var =
                Var
                  {
@@ -181,9 +181,9 @@ let rec from_cst (scopes : binding list list) (free_list : name list) (expr : Cs
         let (n_f_list, lifted_body) = from_cst [lifted_args] [] body in
         let cap_list = map (fun n -> lookup_name n scopes) n_f_list in
         (match sequence cap_list with
-           | Left _ -> raise (Failure
+           | Error _ -> raise (Failure
              "TODO error name wasn't capturable / not defined")
-           | Right captures ->
+           | Ok captures ->
              let lifted_func = Fun {
                f_body = lifted_body;
                captures = map (fun (b, _i, _j) -> b) captures;

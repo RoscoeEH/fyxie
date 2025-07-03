@@ -10,7 +10,6 @@
  * slot, and versions of those representing numbers, pointers,
  * indexes, etc are all sort of muddled together.
  *)
-open Either
 open Option
 
 (* couldn't find an existing monad signature for option *)
