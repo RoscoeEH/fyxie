@@ -50,29 +50,17 @@ type binding = {
     b_name : name;
     b_tp : type_t;
   }
-
-type v_ref = {
+and v_ref = {
     v_name : name;
     v_slot: int;
   }
-
-type expr = {
-  tp: type_t;
-  inner: content
-}
-and content =
-    | Fun of func
-    | Let of let_block
-    | Var of v_ref
-    | App of application
-    | Lit of literal
 and func = {
     f_args : binding Array.t;
     captures : binding Array.t;
     f_body : expr
   }
 and let_block = {
-    binds : binding Array.t;
+    binds : (binding * expr) Array.t;
     l_body : expr
   }
 and application = {
@@ -82,7 +70,16 @@ and application = {
 and literal = {
     value : int
   }
-
+and content =
+    | Fun of func
+    | Let of let_block
+    | Var of v_ref
+    | App of application
+    | Lit of literal
+and expr = {
+  tp: type_t;
+  inner: content
+}
 
 (* simple lifts from cst to ast types *)
 let from_cst_name = fun a -> a
@@ -130,12 +127,15 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
   match expr with
       | Cst.Lit v -> (free_list, { tp = Int_t; inner = Lit {value=v}})
       | Cst.Let (binds, body) ->
-        let binds' = of_list (List.map from_cst_binding binds) in
+        let a_binds = of_list binds in
+        let arms = Array.map (fun (_bind, expr) -> expr) a_binds in
+        let binds' = Array.map (fun (b, _expr) -> from_cst_binding b) a_binds in
         let (fl2, body') = from_cst (binds' :: scopes) free_list body in
-        (fl2, { tp = body'.tp;
+        let (fl3, arms') = lift_arms scopes fl2 arms in
+        (fl3, { tp = body'.tp;
                 inner = Let {
                     l_body = body';
-                    binds = binds'}})
+                    binds = Array.combine binds' arms'}})
       | Cst.App (func, args) ->
         let (fl2, func') = from_cst scopes free_list func in
         (match check_app (func'.tp) scopes fl2 args with
@@ -176,3 +176,6 @@ and check_app f_t scopes fl exprs =
             | Ok (fl3, arg_tail', o_t) -> Ok (fl3, arg' :: arg_tail', o_t))
         else Error "Argument type doesn't match expected type from function"
       | _ -> Error "Too many arguments or non-function type in App head")
+and lift_arms scopes fl arms =
+    let helper fl2 arm = from_cst scopes fl2 arm in
+    Array.fold_left_map helper fl arms

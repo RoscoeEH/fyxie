@@ -40,7 +40,7 @@ end
 open OM
 
 module Interpreter = struct
-include Bytecode
+include Bytecode.BC
 
 let is_pointer s = match s with
   | Op _ -> false
@@ -74,12 +74,6 @@ let stack_start = heap_start - 1
 let mem = Array.make mem_size zero
 let sp = ref 0
 let hp = ref heap_start
-
-(* infix inclusive range list syntax *)
-let (--) i j =
-  let rec aux n acc =
-    if n < i then acc else aux (n-1) (n ::acc)
-  in aux j []
 
 let fwd_addr ptr = as_pointer (mem.(ptr))
 let copy_and_fwd ptr nh_top =
