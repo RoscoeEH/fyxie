@@ -24,20 +24,64 @@ open Dynarray
  *
  * function application reserves a slot, then evaluates the args in reverse order, then calls the function
  * At the end of the function, the return value is written to the reserved slot, the locals are dropped, and the return is executed
+ *
+ * function closures are pointers to heap allocations with the follwing layout:
+ *
  * *)
 
-
-let compile target expr offset =
-  match expr with
+let rec compile target expr offset =
+  let emit op = add_last target op in
+  let inc_off = offset := !offset + 1 in
+  match expr.inner with
   | Lit l ->
-    add_last target (PushLit l.value);
-    offset := !offset + 1
+    emit (push_lit l.value);
+    inc_off
   | Var v ->
-    add_last target (FetchSp (v.v_slot + !offset));
-    offset := !offset + 1
-   | Fun _ -> _
-  | Let _ -> _
+    emit (fetch_stack (v.v_slot + !offset));
+    inc_off
+  | Let l ->
+    let hold_off = !offset in
+    let arm_helper (_bind, arm) = compile target arm offset in
+    Array.iter arm_helper l.binds; (* TODO reverse? *)
+    compile target l.l_body offset;
+    emit (set_stack_x (!offset - hold_off));
+    emit (drop (!offset - hold_off));
+    offset := hold_off + 1 (* TODO I'm suspicious about these offsets *)
+  | Fun f ->
+    let n_args = Array.length f.f_args in
+    let n_caps = Array.length f.captures in
+    let closure_size = n_args + n_caps + 1 in
+    emit (alloc closure_size);
+    inc_off;
+    let ptr_off = !offset in
+    for i = 0 to Array.length f.captures do
+      let (_, from_slot) = f.captures.(i) in
+      emit (fetch_stack (!offset - ptr_off)); (* copy closure ptr to top *)
+      emit (fetch_stack (!offset + from_slot + 1)); (* copy closure val to top *)
+      emit (set_x_y (1 + n_args + i))
+    done; (* closures populated *)
+    let here = length target in (* TODO right way to get code ptr? *)
+    let body = Dynarray.create () in
+    let body_off = ref 0 in
+    compile body f.f_body body_off;
+    emit (jump (length body));  (* compile fun def inline and a jump over it *)
+    append target body;         (* simple compilation, dubious runtime *)
+    emit (fetch_stack 0);
+    emit (push_lit here);
+    emit (set_x_y 0);           (* write code ptr to closure *)
+    inc_off                     (* closure ptr on stack *)
   | App _ -> _
+    (* TODO see note in ast application about partial application *)
+    (*
+     * emit (PushLit 0);
+     * inc_off;          (\* ret val slot *\)
+     * compile target a.func offset;
+     *
+     * for i = Array.length a.a_args - 1 downto 0 do
+     *   compile target a.a_args.(i) offset
+     * done;
+     *)
+
 
 
 

@@ -10,9 +10,11 @@ module type Bytecode = sig
     | Drop of int
     | Alloc of int
     | Fetch of int
+    | FetchRegion of (int * int)
     | Set of int
     | Call
     | Ret
+    | Jump of int
   type slot =
     | Num of int
     | Op of bc_op
@@ -36,12 +38,17 @@ module type Bytecode = sig
   val alloc : int -> bc_op ctx
   (* push v, the value obtained by fetching x from TOS with N slots offset ( x -- y ) *)
   val fetch_x : int -> bc_op ctx
+  (* push v..v_(M-1), the value obtained by fetching x from
+   * TOS with N slots offset, followed by x+N+1 up to x+N+(M-1) ( x -- v..v_(M-1)) *)
+  val fetch_region_x : int -> int -> bc_op ctx
   (* set value at x (deeper) plus N slots offset to y (TOS) ( x y -- ) *)
   val set_x_y : int -> bc_op ctx
   (* transfer control to x (TOS), replacing it with the location of the next slot that would have been executed ( x -- r ) *)
   val call_x : bc_op ctx
   (* transfer control to r (TOS), popping it ( r -- ) *)
   val return_x : bc_op ctx
+  (* transfer control to an offset calculated from the next slot to be executed. Stack untouched ( -- ) *)
+  val jump : int -> bc_op ctx
 end
 
 (* CT = compile time *)
@@ -58,9 +65,11 @@ module BC : Bytecode = struct
     | Drop of int
     | Alloc of int
     | Fetch of int
+    | FetchRegion of (int * int)
     | Set of int
     | Call
     | Ret
+    | Jump of int
   type slot =
     | Num of int
     | Op of bc_op
@@ -74,7 +83,9 @@ module BC : Bytecode = struct
   let drop n = Drop n
   let alloc n = Alloc n
   let fetch_x n = Fetch n
+  let fetch_region_x n m = FetchRegion (n, m)
   let set_x_y n = Set n
   let call_x = Call
   let return_x = Ret
+  let jump n = Jump n
 end

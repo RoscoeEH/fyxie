@@ -46,6 +46,8 @@ type type_t =
 | Int_t
 | Fun_t of type_t * type_t
 
+(* TODO consider merging v_ref and binding, so that every name+type
+   also has a slot idx *)
 type binding = {
     b_name : name;
     b_tp : type_t;
@@ -56,7 +58,7 @@ and v_ref = {
   }
 and func = {
     f_args : binding Array.t;
-    captures : binding Array.t;
+    captures : (binding * int) Array.t;
     f_body : expr
   }
 and let_block = {
@@ -66,6 +68,35 @@ and let_block = {
 and application = {
     func : expr;
     a_args : expr Array.t
+    (* TODO we need to distinguish between partial and total
+     * application, aka are all the required arguments present. We
+     * can't do that currently, since a function that returns a
+     * function is a valid type, but a partially applied function of
+     * two arguments is also typed as a curried function.
+     *
+     * See:
+https://www.cambridge.org/core/journals/journal-of-functional-programming/article/making-a-fast-curry-pushenter-vs-evalapply-for-higherorder-languages/02447DB613E94DC35ACDCB24DB39F085
+     *
+     * I don't think we want to support partial application at the
+     * moment, since it requires complexity in the runtime I don't
+     * want to deal with currently. The issue is that there isn't really
+     * a good place to insert the check that each application is total
+     * and not partial. This is mostly cause things like applying a
+     * let block that returns a function to an arg is valid, so we have
+     * the function type but not the number of arguments at the
+     * application site.
+     *
+     * TODO we could adjust the types to be more expressive to distinguish
+     * int -> int -> int and int -> (int -> int)
+     * or we could find some place where we can check this property
+     * and fail on partial applications. I'd like to do the second if
+     * possible since in the longer term partial application is
+     * something we will want, and it seems annoying to change it
+     * just to change it back later.
+     *
+     * At the moment we are going to use something similar to the push
+     * model.
+     *)
   }
 and literal = {
     value : int
@@ -158,7 +189,7 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
              let lifted_func = Fun {
                  f_args = args';
                  f_body = body';
-                 captures = Array.map (fun (b, _i) -> b) (Array.of_list captures);
+                 captures = (Array.of_list captures);
                }
              in
              let func_t = Array.fold_right (fun arg tail_t -> Fun_t (arg.b_tp, tail_t)) args' body'.tp in
