@@ -1,4 +1,5 @@
 (* TODO interface? *)
+open Option
 
 module type Bytecode = sig
   type bc_op =
@@ -10,7 +11,7 @@ module type Bytecode = sig
     | Drop of int
     | Alloc of int
     | Fetch of int
-    | FetchRegion of (int * int)
+    | FetchRegion of int
     | Set of int
     | Call
     | Ret
@@ -20,8 +21,12 @@ module type Bytecode = sig
     | Op of bc_op
   type 'a ctx
 
-  (* codes *)
+  (* effect of executing instruction on the size of the stack *)
+  val stack_effect : bc_op ctx -> int option
 
+  (* stack indicies are calculated before the stack effect of the opcode. *)
+
+  (* codes *)
   (* place a CT value on the RT stack ( -- x ) *)
   val push_lit : int -> bc_op ctx
   (* reserve N new slots on the RT stack ( -- x_1 ... x_n ) *)
@@ -38,9 +43,9 @@ module type Bytecode = sig
   val alloc : int -> bc_op ctx
   (* push v, the value obtained by fetching x from TOS with N slots offset ( x -- y ) *)
   val fetch_x : int -> bc_op ctx
-  (* push v..v_(M-1), the value obtained by fetching x from
-   * TOS with N slots offset, followed by x+N+1 up to x+N+(M-1) ( x -- v..v_(M-1)) *)
-  val fetch_region_x : int -> int -> bc_op ctx
+  (* push v..v_(M-1), the value obtained by fetching x with N slots
+   * offset, followed by x+N+1 up to x+N+(y-1) ( x y -- v..v_(y-1)) *)
+  val fetch_region_x_y : int -> bc_op ctx
   (* set value at x (deeper) plus N slots offset to y (TOS) ( x y -- ) *)
   val set_x_y : int -> bc_op ctx
   (* transfer control to x (TOS), replacing it with the location of the next slot that would have been executed ( x -- r ) *)
@@ -65,7 +70,7 @@ module BC : Bytecode = struct
     | Drop of int
     | Alloc of int
     | Fetch of int
-    | FetchRegion of (int * int)
+    | FetchRegion of int
     | Set of int
     | Call
     | Ret
@@ -75,6 +80,22 @@ module BC : Bytecode = struct
     | Op of bc_op
   type 'a ctx = 'a
 
+  let stack_effect op = match op with
+    | PushLit _ -> some 1
+    | ResStack i -> some i
+    | FetchSp _ -> some 1
+    | SetSp _ -> some (-1)
+    | Swap -> some 0
+    | Drop i -> some i
+    | Alloc _ -> some 1
+    | Fetch _ -> some 0
+    | FetchRegion _ -> none
+    | Set _ -> some (-2)
+    | Call -> some 0
+    | Ret -> some (-1)
+    | Jump _ -> some 0
+
+
   let push_lit n = PushLit n
   let reserve_stack n = ResStack n
   let fetch_stack n = FetchSp n
@@ -83,7 +104,7 @@ module BC : Bytecode = struct
   let drop n = Drop n
   let alloc n = Alloc n
   let fetch_x n = Fetch n
-  let fetch_region_x n m = FetchRegion (n, m)
+  let fetch_region_x_y n = FetchRegion n
   let set_x_y n = Set n
   let call_x = Call
   let return_x = Ret

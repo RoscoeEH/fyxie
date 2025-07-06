@@ -44,7 +44,7 @@ type name = string
 
 type type_t =
 | Int_t
-| Fun_t of type_t * type_t
+| Fun_t of (type_t array) * type_t
 
 (* TODO consider merging v_ref and binding, so that every name+type
    also has a slot idx *)
@@ -116,7 +116,7 @@ and expr = {
 let from_cst_name = fun a -> a
 let rec from_cst_type t = match t with
   | Cst.Int_t -> Int_t
-  | Cst.Fun_t (hd, tl) -> Fun_t ((from_cst_type hd), (from_cst_type tl))
+  | Cst.Fun_t (args, ret) -> Fun_t ((Array.map from_cst_type args), (from_cst_type ret))
 let from_cst_binding ((n, t) : Cst.binding) = { b_name = n ; b_tp = from_cst_type t; }
 
 let matching_binding n (scope : binding array) =
@@ -169,44 +169,50 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
                     binds = Array.combine binds' arms'}})
       | Cst.App (func, args) ->
         let (fl2, func') = from_cst scopes free_list func in
-        (match check_app (func'.tp) scopes fl2 args with
-         | Ok (fl3, args', a_t) ->
-           (fl3, {tp=a_t; inner=App {func = func'; a_args = Array.of_list args'}})
-         | Error s -> raise (Failure s))
+        let (fl3, args', r_t) = check_app scopes fl2 args func'.tp in
+        let a_t = Fun_t (Array.map (fun a -> a.tp) args', r_t) in
+        (fl3, {tp=a_t; inner=App {func = func'; a_args = args'}})
       | Cst.Var name ->
+        let (bind, slot_idx) =
         (match lookup_name (from_cst_name name) scopes with
            | Error s -> raise (Failure s)
-           | Ok (bind, slot_idx) ->
-             (free_list,
-              {tp=bind.b_tp; inner=Var {v_name=name; v_slot=slot_idx}}))
+           | Ok v -> v)
+        in
+        (free_list, {tp=bind.b_tp; inner=Var {v_name=name; v_slot=slot_idx}})
       | Cst.Fun (args, body) ->
         let args' = Array.map from_cst_binding (Array.of_list args) in
         let (fl2, body') = from_cst [args'] [] body in
         let cap_list = List.map (fun n -> lookup_name n scopes) fl2 in
-        (match sequence cap_list with
-           | Error s -> raise (Failure s)
-           | Ok captures ->
-             let lifted_func = Fun {
-                 f_args = args';
-                 f_body = body';
-                 captures = (Array.of_list captures);
-               }
-             in
-             let func_t = Array.fold_right (fun arg tail_t -> Fun_t (arg.b_tp, tail_t)) args' body'.tp in
-             (List.append free_list fl2, {tp=func_t; inner=lifted_func}))
-and check_app f_t scopes fl exprs =
-  (* checks arity + types, returns (freelist, lifted arg list, output type) or error*)
-  match exprs with
-  | [] -> Ok (fl, [], f_t)
-  | arg :: arg_tail -> (match f_t with
-      | Fun_t (a_t, r_t) ->
-        let (fl2, arg') = from_cst scopes fl arg in
-        if arg'.tp == a_t
-        then (match check_app r_t scopes fl2 arg_tail with
-            | Error s -> Error s
-            | Ok (fl3, arg_tail', o_t) -> Ok (fl3, arg' :: arg_tail', o_t))
-        else Error "Argument type doesn't match expected type from function"
-      | _ -> Error "Too many arguments or non-function type in App head")
+        let captures = (match sequence cap_list with
+            | Error s -> raise (Failure s)
+            | Ok v -> v)
+        in
+        let func' = Fun {
+            f_args = args';
+            f_body = body';
+            captures = (Array.of_list captures)}
+        in
+        let func_t = Fun_t (Array.map (fun b -> b.b_tp) args', body'.tp)  in
+        (List.append free_list fl2, {tp=func_t; inner=func'})
+and check_app scopes fl args f_t =
+  (* checks arity + types, returns (freelist, lifted arg array, output type) or error*)
+  let rec lift fl lst = match lst with
+    | [] -> (fl, [])
+    | hd::tl ->
+      let (fl2, hd') = from_cst scopes fl hd in
+      let (fl3, tl') = lift fl2 tl in
+      (fl3, hd'::tl')
+  in
+  let (fl2, args') = (fun (fl, ag) -> (fl, of_list ag)) (lift fl args) in
+  match f_t with
+  | Fun_t (fa_t, r_t) ->
+    if length fa_t == length args'
+    then (if fa_t == Array.map (fun e -> e.tp) args'
+          then (fl2, args', r_t)
+          else raise (Failure "Argument type doesn't match in function application"))
+    else raise (Failure "Wrong number of arguments in function application")
+  | _ -> raise (Failure "Application applied to non function type")
+
 and lift_arms scopes fl arms =
     let helper fl2 arm = from_cst scopes fl2 arm in
     Array.fold_left_map helper fl arms
