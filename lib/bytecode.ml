@@ -44,7 +44,7 @@ module type Bytecode = sig
   val alloc : int -> bc_op ctx
   (* push v, the value obtained by fetching x from TOS with N slots offset ( x -- y ) *)
   val fetch_x : int -> bc_op ctx
-  (* push v..v_(M-1), the value obtained by fetching x with N slots
+  (* push v..v_(y-1), the value obtained by fetching x with N slots
    * offset, followed by x+N+1 up to x+N+(y-1) ( x y -- v..v_(y-1)) *)
   val fetch_region_x_y : int -> bc_op ctx
   (* set value at x (deeper) plus N slots offset to y (TOS) ( x y -- ) *)
@@ -105,7 +105,7 @@ module BC : Bytecode = struct
     | Drop i -> "drop " ^ (string_of_int i)
     | Alloc i -> "alloc " ^ (string_of_int i)
     | Fetch i -> "fetch " ^ (string_of_int i)
-    | FetchRegion (i, j) -> "fetchmany " ^ (string_of_int i) ^ " " ^ (string_of_int j)
+    | FetchRegion n -> "fetchmany " ^ (string_of_int n)
     | Set i -> "set " ^ (string_of_int i)
     | Call -> "call"
     | Ret -> "return"

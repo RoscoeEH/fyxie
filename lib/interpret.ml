@@ -17,6 +17,16 @@ open Util.OM
 module Interpreter = struct
 include Bytecode.BC
 
+(* Each slot is either an opcode or a value, distinguished by ocaml
+ * case analysis.
+ *
+ * A value can be either an integer or a pointer, distinguished by
+ * the low order bit.
+ *
+ * In a real compilation, one would eschew the op vs val check, and
+ * just to a number/pointer check (or not even that). This tagging is
+ * for garbage collection. *)
+
 let is_pointer s = match s with
   | Op _ -> false
   | Num i -> Int.logand i 1 == 1
@@ -143,49 +153,46 @@ let run1 =
     push (from_int_as_ptr h);
     inc_pc
   | Fetch n ->
-    let x = match mem.(!sp+1) with
-      | Num n -> n
-      | Op _ -> raise (Failure "Address of fetch was an opcode not a number")
+    let x = Option.value (as_pointer (mem.(!sp+1)))
+        ~default:(raise (Failure "Address of fetch wasn't a pointer"))
     in
     mem.(!sp+1) <- mem.(x+n);
     inc_pc
-  | FetchRegion (n,m) ->
-    let x = match mem.(!sp+1) with
-      | Num n -> n
-      | Op _ -> raise (Failure "Address of fetch region was an opcode not a number")
+  | FetchRegion n ->
+    let x = Option.value (as_pointer (mem.(!sp+2)))
+        ~default:(raise (Failure "Address of fetch region wasn't a pointer"))
+    in
+    let y = Option.value (as_int (mem.(!sp+1)))
+        ~default:(raise (Failure "Size of fetch region wasn't a number"))
     in
     pop;
-    for i = x+n to x+n+m do
+    for i = x+n to x+n+y do
       push (mem.(i))
     done;
     inc_pc
   | Set n ->
     let v = mem.(!sp+1) in
-    let x = match mem.(!sp+2) with
-      | Num n -> n
-      | Op _ -> raise (Failure "Address of set was an opcode not a number")
+    let x = Option.value (as_pointer (mem.(!sp+2)))
+        ~default:(raise (Failure "Address of set wasn't a pointer"))
     in
     sp := !sp+2;
     mem.(x+n) <- v;
     inc_pc
   | Call ->
-    let x = match mem.(!sp+1) with
-      | Num n -> n
-      | Op _ -> raise (Failure "Address of call was an opcode not a number")
+    let x = Option.value (as_int (mem.(!sp+1)))
+        ~default:(raise (Failure "Address of call wasn't a pointer"))
     in
     inc_pc;
     mem.(!sp+1) <- from_int_as_ptr !pc;
     pc := x
   | Ret ->
-    let x = match mem.(!sp+1) with
-      | Num n -> n
-      | Op _ -> raise (Failure "Address of return was an opcode not a number")
+    let x = Option.value (as_int (mem.(!sp+1)))
+        ~default:(raise (Failure "Address of return wasn't a pointer"))
     in
     pop;
     pc := x
   | Jump n ->
     pc := !pc+n
-
 
 (* TODO do I want to compile into an array and then run that? or
  * actually walk the tree and do things live? I'm sort of leaning
