@@ -72,8 +72,9 @@ let heap_end = 4097
 let heap_mid = (heap_end - heap_start) / 2
 let stack_start = heap_start - 1
 let mem = Array.make mem_size zero
-let sp = ref 0
+let sp = ref (heap_start-1)
 let hp = ref heap_start
+let pc = ref 0
 
 let fwd_addr ptr = as_pointer (mem.(ptr))
 let copy_and_fwd ptr nh_top =
@@ -131,7 +132,86 @@ let bump_maybe_gc n =
     let h = !hp + 1 in
     let _ = hp := h + n in h
 
-(* TODO define runner based on bytecode interpretor + garbage collection *)
+let run1 =
+  let pop = sp := !sp+1 in
+  let push s = mem.(!sp) <- s; sp := !sp-1 in
+  let inc_pc = pc := !pc+1 in
+  let op = match mem.(!pc) with
+    | Num _ -> raise (Failure "Tried to execute something other than an opcode")
+    | Op o -> o
+  in match op with
+  | PushLit l ->
+    push (from_int_as_num l);
+    inc_pc
+  | ResStack s ->
+    sp := !sp-s;
+    inc_pc
+  | FetchSp n ->
+    let v = mem.(!sp+n+1) in
+    push (v);
+    inc_pc
+  | SetSp n ->
+    let x = mem.(!sp+1) in
+    mem.(!sp+1+n) <- x;
+    pop;
+    inc_pc
+  | Swap ->
+    let hold = mem.(!sp+1) in
+    mem.(!sp+1) <- mem.(!sp+2);
+    mem.(!sp+2) <- hold;
+    inc_pc
+  | Drop n ->
+    sp := !sp+n;
+    inc_pc
+  | Alloc n ->
+    let h = bump_maybe_gc n in
+    push (from_int_as_ptr h);
+    inc_pc
+  | Fetch n ->
+    let x = match mem.(!sp+1) with
+      | Num n -> n
+      | Op _ -> raise (Failure "Address of fetch was an opcode not a number")
+    in
+    mem.(!sp+1) <- mem.(x+n);
+    inc_pc
+  | FetchRegion (n,m) ->
+    let x = match mem.(!sp+1) with
+      | Num n -> n
+      | Op _ -> raise (Failure "Address of fetch region was an opcode not a number")
+    in
+    pop;
+    for i = x+n to x+n+m do
+      push (mem.(i))
+    done;
+    inc_pc
+  | Set n ->
+    let v = mem.(!sp+1) in
+    let x = match mem.(!sp+2) with
+      | Num n -> n
+      | Op _ -> raise (Failure "Address of set was an opcode not a number")
+    in
+    sp := !sp+2;
+    mem.(x+n) <- v;
+    inc_pc
+  | Call ->
+    let x = match mem.(!sp+1) with
+      | Num n -> n
+      | Op _ -> raise (Failure "Address of call was an opcode not a number")
+    in
+    inc_pc;
+    mem.(!sp+1) <- from_int_as_ptr !pc;
+    pc := x
+  | Ret ->
+    let x = match mem.(!sp+1) with
+      | Num n -> n
+      | Op _ -> raise (Failure "Address of return was an opcode not a number")
+    in
+    pop;
+    pc := x
+  | Jump n ->
+    pc := !pc+n
+
+
 (* TODO do I want to compile into an array and then run that? or
  * actually walk the tree and do things live? I'm sort of leaning
  * towards compiled since I think that will be easier and also what we

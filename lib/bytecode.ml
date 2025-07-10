@@ -23,10 +23,11 @@ module type Bytecode = sig
 
   (* effect of executing instruction on the size of the stack *)
   val stack_effect : bc_op ctx -> int option
-
-  (* stack indicies are calculated before the stack effect of the opcode. *)
+  val pretty_print_op : bc_op -> string
+  val pretty_print_slot : slot -> string
 
   (* codes *)
+  (* stack indicies are calculated before the stack effect of the opcode. *)
   (* place a CT value on the RT stack ( -- x ) *)
   val push_lit : int -> bc_op ctx
   (* reserve N new slots on the RT stack ( -- x_1 ... x_n ) *)
@@ -95,6 +96,24 @@ module BC : Bytecode = struct
     | Ret -> some (-1)
     | Jump _ -> some 0
 
+  let pretty_print_op o = match o with
+    | PushLit i -> "pushlit " ^ (string_of_int i)
+    | ResStack i -> "ressp " ^ (string_of_int i)
+    | FetchSp i -> "fetchsp " ^ (string_of_int i)
+    | SetSp i -> "setsp " ^ (string_of_int i)
+    | Swap -> "swap"
+    | Drop i -> "drop " ^ (string_of_int i)
+    | Alloc i -> "alloc " ^ (string_of_int i)
+    | Fetch i -> "fetch " ^ (string_of_int i)
+    | FetchRegion (i, j) -> "fetchmany " ^ (string_of_int i) ^ " " ^ (string_of_int j)
+    | Set i -> "set " ^ (string_of_int i)
+    | Call -> "call"
+    | Ret -> "return"
+    | Jump i -> "jump " ^ (string_of_int i)
+
+  let pretty_print_slot s = match s with
+    | Num i -> string_of_int i
+    | Op o -> pretty_print_op o
 
   let push_lit n = PushLit n
   let reserve_stack n = ResStack n
