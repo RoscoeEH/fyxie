@@ -8,37 +8,7 @@ open Result
 open List
 open Array
 
-(* monad sig for result *)
-module RM = struct
-  type e
-  type 'a t = ('a, e) result
-
-  let bind a f = match a with
-    | Error e -> Error e
-    | Ok v -> f v
-
-  let (>>=) = bind
-  let return a = Ok a
-
-  let map f a = match a with
-    | Error e -> Error e
-    | Ok v -> Ok (f v)
-  let (>>|) a f = map f a
-
-  let (<|>) a b = match a with
-    | Ok a -> Ok a
-    | Error _ -> b
-  let (>>) a b = match a with
-    | Error e -> Error e
-    | Ok _ -> b
-
-  let (let*) a f = bind a f
-
-  let map_err f a = match a with
-    | Ok v -> Ok v
-    | Error e -> Error (f e)
-end
-open RM
+open Util.RM
 
 type name = string
 
@@ -137,15 +107,6 @@ let lookup_name name (scopes : binding array list) =
   let r = List.fold_left helper (Error 0) scopes in
   map_err (fun _ -> name ^ " not defined") r
 
-(* Collects Ok values, stops on an Error *)
-let sequence (lst: ('a, 'e) result list) =
-  let cons_ok (elm: ('a, 'e) result) (acc: ('a list, 'e) result) =
-    let* a = acc in
-    let* e = elm in
-    Ok (e :: a)
-  in
-  let (init: ('a list, 'e) result) = Ok [] in
-  List.fold_right cons_ok lst init
 
 (* TODO this is still not great but it it is better.
  *

@@ -12,32 +12,7 @@
  *)
 open Option
 
-(* couldn't find an existing monad signature for option *)
-module OM = struct
-  type 'a t = 'a option
-  let bind a f = match a with
-    | None -> None
-    | Some v -> f v
-
-  let (>>=) = bind
-  let return a = Some a
-
-  let map f a = match a with
-    | None -> None
-    | Some v -> Some (f v)
-  let (>>|) a f = map f a
-
-  let (<|>) a b = match a with
-    | Some v -> Some v
-    | None -> b
-
-  let (>>) a b = match a with
-    | None -> None
-    | Some _ -> b
-
-  let (let*) a f = bind a f
-end
-open OM
+open Util.OM
 
 module Interpreter = struct
 include Bytecode.BC
