@@ -117,7 +117,7 @@ let bump_maybe_gc n =
     let h = !hp + 1 in
     let _ = hp := h + n in h
 
-let run1 =
+let run1 () =
   let pop = sp := !sp+1 in
   let push s = mem.(!sp) <- s; sp := !sp-1 in
   let inc_pc = pc := !pc+1 in

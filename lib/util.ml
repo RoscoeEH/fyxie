@@ -2,8 +2,7 @@
 
 (* couldn't find an existing monad signature for option *)
 module OM = struct
-  open Option
-  type 'a t = 'a option
+  include Option
   let bind a f = match a with
     | None -> None
     | Some v -> f v
