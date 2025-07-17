@@ -192,6 +192,7 @@ module Parse = struct
   end
   open Parser
 
+  (* Structural (=) v. physical (==) equality needs to be changed here *)
   let literal l =
     let* n = next in
     match n with
