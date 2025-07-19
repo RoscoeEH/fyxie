@@ -1,3 +1,7 @@
+(*
+   Define stack machine ISA and some helpers
+*)
+
 (* TODO interface? *)
 open Option
 
@@ -16,9 +20,11 @@ module type Bytecode = sig
     | Call
     | Ret
     | Jump of int
+
   type slot =
     | Num of int
     | Op of bc_op
+
   type 'a ctx
 
   (* effect of executing instruction on the size of the stack *)
@@ -30,29 +36,41 @@ module type Bytecode = sig
   (* stack indicies are calculated before the stack effect of the opcode. *)
   (* place a CT value on the RT stack ( -- x ) *)
   val push_lit : int -> bc_op ctx
+
   (* reserve N new slots on the RT stack ( -- x_1 ... x_n ) *)
   val reserve_stack : int -> bc_op ctx
+
   (* fetch the Nth slot on the stack, with 0 being TOS ( -- x ) *)
   val fetch_stack : int -> bc_op ctx
+
   (* set the Nth slot on the stack to val from TOS, popping it ( x -- ) *)
   val set_stack_x : int -> bc_op ctx
+
   (* Swap the top stack elements ( x y -- y x ) *)
   val swap : bc_op ctx
+
   (* drop the top N slots of the stack, inverse of reserve_stack *)
   val drop : int -> bc_op ctx
+
   (* push x, a pointer to a new heap space with N slots ( -- x ) *)
   val alloc : int -> bc_op ctx
+
   (* push v, the value obtained by fetching x from TOS with N slots offset ( x -- y ) *)
   val fetch_x : int -> bc_op ctx
+
   (* push v..v_(y-1), the value obtained by fetching x with N slots
    * offset, followed by x+N+1 up to x+N+(y-1) ( x y -- v..v_(y-1)) *)
   val fetch_region_x_y : int -> bc_op ctx
+
   (* set value at x (deeper) plus N slots offset to y (TOS) ( x y -- ) *)
   val set_x_y : int -> bc_op ctx
+
   (* transfer control to x (TOS), replacing it with the location of the next slot that would have been executed ( x -- r ) *)
   val call_x : bc_op ctx
+
   (* transfer control to r (TOS), popping it ( r -- ) *)
   val return_x : bc_op ctx
+
   (* transfer control to an offset calculated from the next slot to be executed. Stack untouched ( -- ) *)
   val jump : int -> bc_op ctx
 end
@@ -62,7 +80,7 @@ end
 (* TOS = top of stack *)
 (* capital letters are CT values *)
 module BC : Bytecode = struct
-    type bc_op =
+  type bc_op =
     | PushLit of int
     | ResStack of int
     | FetchSp of int
@@ -76,12 +94,15 @@ module BC : Bytecode = struct
     | Call
     | Ret
     | Jump of int
+
   type slot =
     | Num of int
     | Op of bc_op
+
   type 'a ctx = 'a
 
-  let stack_effect op = match op with
+  let stack_effect op =
+    match op with
     | PushLit _ -> some 1
     | ResStack i -> some i
     | FetchSp _ -> some 1
@@ -95,25 +116,30 @@ module BC : Bytecode = struct
     | Call -> some 0
     | Ret -> some (-1)
     | Jump _ -> some 0
+  ;;
 
-  let pretty_print_op o = match o with
-    | PushLit i -> "pushlit " ^ (string_of_int i)
-    | ResStack i -> "ressp " ^ (string_of_int i)
-    | FetchSp i -> "fetchsp " ^ (string_of_int i)
-    | SetSp i -> "setsp " ^ (string_of_int i)
+  let pretty_print_op o =
+    match o with
+    | PushLit i -> "pushlit " ^ string_of_int i
+    | ResStack i -> "ressp " ^ string_of_int i
+    | FetchSp i -> "fetchsp " ^ string_of_int i
+    | SetSp i -> "setsp " ^ string_of_int i
     | Swap -> "swap"
-    | Drop i -> "drop " ^ (string_of_int i)
-    | Alloc i -> "alloc " ^ (string_of_int i)
-    | Fetch i -> "fetch " ^ (string_of_int i)
-    | FetchRegion n -> "fetchmany " ^ (string_of_int n)
-    | Set i -> "set " ^ (string_of_int i)
+    | Drop i -> "drop " ^ string_of_int i
+    | Alloc i -> "alloc " ^ string_of_int i
+    | Fetch i -> "fetch " ^ string_of_int i
+    | FetchRegion n -> "fetchmany " ^ string_of_int n
+    | Set i -> "set " ^ string_of_int i
     | Call -> "call"
     | Ret -> "return"
-    | Jump i -> "jump " ^ (string_of_int i)
+    | Jump i -> "jump " ^ string_of_int i
+  ;;
 
-  let pretty_print_slot s = match s with
+  let pretty_print_slot s =
+    match s with
     | Num i -> string_of_int i
     | Op o -> pretty_print_op o
+  ;;
 
   let push_lit n = PushLit n
   let reserve_stack n = ResStack n
