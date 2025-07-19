@@ -1,17 +1,26 @@
 build:
-	dune build
+	opam exec -- dune build
 
 run:
-	dune exec bin/main.exe
+	opam exec -- dune exec bin/main.exe
 
 clean:
-	dune clean
+	opam exec -- dune clean
 
 test:
-	dune runtest
+	opam exec -- dune runtest
 
 fmt:
-	dune fmt
+	opam exec -- dune fmt
 
 install:
-	dune install
+	opam exec -- dune install
+
+config:
+	@if opam switch show | grep -q "$(PWD)"; then \
+	  echo "==> Updating opam switch..."; \
+	  opam install . --deps-only --locked -y; \
+	else \
+	  echo "==> Creating opam switch..."; \
+	  opam switch create . --deps-only --locked -y; \
+	fi
