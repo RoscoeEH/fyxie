@@ -3,7 +3,6 @@
 open In_channel
 open Option
 open Result
-open Buffer
 open Cst
 
 (* Converts strings to concrete tokens *)
