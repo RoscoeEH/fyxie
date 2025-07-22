@@ -27,23 +27,12 @@ include Bytecode.BC
  * just to a number/pointer check (or not even that). This tagging is
  * for garbage collection. *)
 
-let is_pointer s = match s with
-  | Op _ -> false
-  | Num i -> Int.logand i 1 == 1
 
-let as_pointer s = match s with
-  | Op _ -> none
-  | Num i -> if Int.logand i 1 == 1
-    then some(Int.shift_right i 1)
-    else none
-let zero = Num 0
 let as_int s = match s with
   | Op _ -> none
   | Num i -> if Int.logand i 1 == 1
     then none
     else some(Int.shift_right i 1)
-let from_int_as_num i = Num (Int.shift_left i 1)
-let from_int_as_ptr i = Num (Int.logor (Int.shift_left i 1) 1)
 
 let to_slot op = Op op
 let to_opcode slot = match slot with
@@ -118,46 +107,46 @@ let bump_maybe_gc n =
     let _ = hp := h + n in h
 
 let run1 () =
-  let pop = sp := !sp+1 in
+  let pop () = sp := !sp+1 in
   let push s = mem.(!sp) <- s; sp := !sp-1 in
-  let inc_pc = pc := !pc+1 in
+  let inc_pc () = pc := !pc+1 in
   let op = match mem.(!pc) with
     | Num _ -> raise (Failure "Tried to execute something other than an opcode")
     | Op o -> o
   in match op with
   | PushLit l ->
     push (from_int_as_num l);
-    inc_pc
+    inc_pc ()
   | ResStack s ->
     sp := !sp-s;
-    inc_pc
+    inc_pc ()
   | FetchSp n ->
     let v = mem.(!sp+n+1) in
     push (v);
-    inc_pc
+    inc_pc ()
   | SetSp n ->
     let x = mem.(!sp+1) in
     mem.(!sp+1+n) <- x;
-    pop;
-    inc_pc
+    pop ();
+    inc_pc ()
   | Swap ->
     let hold = mem.(!sp+1) in
     mem.(!sp+1) <- mem.(!sp+2);
     mem.(!sp+2) <- hold;
-    inc_pc
+    inc_pc ()
   | Drop n ->
     sp := !sp+n;
-    inc_pc
+    inc_pc ()
   | Alloc n ->
     let h = bump_maybe_gc n in
     push (from_int_as_ptr h);
-    inc_pc
+    inc_pc ()
   | Fetch n ->
     let x = Option.value (as_pointer (mem.(!sp+1)))
         ~default:(raise (Failure "Address of fetch wasn't a pointer"))
     in
     mem.(!sp+1) <- mem.(x+n);
-    inc_pc
+    inc_pc ()
   | FetchRegion n ->
     let x = Option.value (as_pointer (mem.(!sp+2)))
         ~default:(raise (Failure "Address of fetch region wasn't a pointer"))
@@ -165,11 +154,11 @@ let run1 () =
     let y = Option.value (as_int (mem.(!sp+1)))
         ~default:(raise (Failure "Size of fetch region wasn't a number"))
     in
-    pop;
+    pop ();
     for i = x+n to x+n+y do
       push (mem.(i))
     done;
-    inc_pc
+    inc_pc ()
   | Set n ->
     let v = mem.(!sp+1) in
     let x = Option.value (as_pointer (mem.(!sp+2)))
@@ -177,19 +166,19 @@ let run1 () =
     in
     sp := !sp+2;
     mem.(x+n) <- v;
-    inc_pc
+    inc_pc ()
   | Call ->
     let x = Option.value (as_int (mem.(!sp+1)))
         ~default:(raise (Failure "Address of call wasn't a pointer"))
     in
-    inc_pc;
+    inc_pc ();
     mem.(!sp+1) <- from_int_as_ptr !pc;
     pc := x
   | Ret ->
     let x = Option.value (as_int (mem.(!sp+1)))
         ~default:(raise (Failure "Address of return wasn't a pointer"))
     in
-    pop;
+    pop ();
     pc := x
   | Jump n ->
     pc := !pc+n
