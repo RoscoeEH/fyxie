@@ -1,8 +1,8 @@
 (*
- * The idea is that the AST should contain all the structural info,
+   * The idea is that the AST should contain all the structural info,
  * but while building it from the cst, we do arity and type checking,
  * and associate variable references to slots in binding scopes.
- *)
+*)
 
 open Result
 open List
@@ -41,7 +41,7 @@ and let_block =
 and application =
   { func : expr
   ; a_args : expr Array.t
-  (* TODO we need to distinguish between partial and total
+    (* TODO we need to distinguish between partial and total
    * application, aka are all the required arguments present. We
    * can't do that currently, since a function that returns a
    * function is a valid type, but a partially applied function of
@@ -69,7 +69,7 @@ https://www.cambridge.org/core/journals/journal-of-functional-programming/articl
    *
    * At the moment we are going to use something similar to the push
    * model.
-   *)
+    *)
   }
 
 and literal = { value : int }
@@ -88,26 +88,49 @@ and expr =
 
 let pp_name n = n
 let pp_lit l = string_of_int l.value
-let rec pp_type t = match t with
+
+let rec pp_type t =
+  match t with
   | Int_t -> "Int"
-  | Fun_t (args, result) -> Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args ^ ") " ^ pp_type result
+  | Fun_t (args, result) ->
+    Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
+    ^ ") "
+    ^ pp_type result
+;;
+
 let pp_binding b = pp_name b.b_name ^ ":" ^ pp_type b.b_tp
 let pp_vref v = "{" ^ pp_name v.v_name ^ "@" ^ string_of_int v.v_slot ^ "}"
-let rec pp_func f = Array.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ" f.f_args ^
-                "[" ^ Array.fold_left (fun acc (b, _i) -> acc ^ pp_binding b ^ " ") "" f.captures ^ "] . " ^
-                pp_expr f.f_body
-and pp_let l = Array.fold_left (fun acc (b,v) -> acc ^ pp_binding b ^ "=" ^ pp_expr v ^ "\n") "let " l.binds ^ " . " ^ pp_expr l.l_body
-and pp_app a = Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("(" ^ pp_expr a.func) a.a_args ^ ")"
+
+let rec pp_func f =
+  Array.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ" f.f_args
+  ^ "["
+  ^ Array.fold_left (fun acc (b, _i) -> acc ^ pp_binding b ^ " ") "" f.captures
+  ^ "] . "
+  ^ pp_expr f.f_body
+
+and pp_let l =
+  Array.fold_left
+    (fun acc (b, v) -> acc ^ pp_binding b ^ "=" ^ pp_expr v ^ "\n")
+    "let "
+    l.binds
+  ^ " . "
+  ^ pp_expr l.l_body
+
+and pp_app a =
+  Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("(" ^ pp_expr a.func) a.a_args
+  ^ ")"
+
 and pp_expr e =
-  let s = match e.inner with
+  let s =
+    match e.inner with
     | Fun f -> pp_func f
     | Let l -> pp_let l
     | Var v -> pp_vref v
     | App a -> pp_app a
     | Lit l -> pp_lit l
-  in "{" ^ s ^ ":" ^ pp_type e.tp ^ "}"
-
-                
+  in
+  "{" ^ s ^ ":" ^ pp_type e.tp ^ "}"
+;;
 
 (* simple lifts from cst to ast types *)
 let from_cst_name a = a
@@ -154,7 +177,7 @@ let lookup_name name (scopes : binding array list) =
  *
  * All the threading of the free_list makes a monad tempting but I'm
  * not sure how exactly to set it up tbh.
- *)
+*)
 let rec from_cst (scopes : binding array list) (free_list : name list) (expr : Cst.expr) =
   match expr with
   | Cst.Lit v -> free_list, { tp = Int_t; inner = Lit { value = v } }

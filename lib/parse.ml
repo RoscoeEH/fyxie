@@ -20,7 +20,6 @@ module Lex : sig
 
   val channel : In_channel.t ref
   val get_token : unit -> token option
-
   val pp_token : token -> string
 end = struct
   type token =
@@ -34,7 +33,8 @@ end = struct
     | Question
     | Equal
 
-  let pp_token t = match t with
+  let pp_token t =
+    match t with
     | Number i -> string_of_int i
     | Symbol s -> s
     | OParen -> "("
@@ -44,7 +44,8 @@ end = struct
     | Lambda -> "λ"
     | Question -> "?"
     | Equal -> "="
-  
+  ;;
+
   let peeked = ref none
   let channel = ref In_channel.stdin
 
@@ -138,7 +139,7 @@ end
  * Assignment := Binding "=" Expression
  * LetBlock := "?" "(" Assignment+ ")" "." Expression
  * Expression := Number | VarRef | Function | Application | LetBlock
- *)
+*)
 module Parse = struct
   module Parser : sig
     type 'a t
