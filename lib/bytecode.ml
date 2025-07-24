@@ -2,7 +2,6 @@
    Define stack machine ISA and some helpers
 *)
 
-(* TODO interface? *)
 open Option
 
 module type Bytecode = sig

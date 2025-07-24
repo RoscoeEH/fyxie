@@ -20,10 +20,9 @@ module Lex : sig
 
   val channel : In_channel.t ref
   val get_token : unit -> token option
-end = struct
-  let peeked = ref none
-  let channel = ref In_channel.stdin
 
+  val pp_token : token -> string
+end = struct
   type token =
     | Number of int
     | Symbol of string
@@ -34,6 +33,20 @@ end = struct
     | Lambda
     | Question
     | Equal
+
+  let pp_token t = match t with
+    | Number i -> string_of_int i
+    | Symbol s -> s
+    | OParen -> "("
+    | CParen -> ")"
+    | Colon -> ":"
+    | Dot -> "."
+    | Lambda -> "λ"
+    | Question -> "?"
+    | Equal -> "="
+  
+  let peeked = ref none
+  let channel = ref In_channel.stdin
 
   let getc () =
     match !peeked with
