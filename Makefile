@@ -17,10 +17,13 @@ install:
 	opam exec -- dune install
 
 config:
-	@if opam switch show | grep -q "$(PWD)"; then \
+	@if [ -d "_opam" ]; then \
 	  echo "==> Updating opam switch..."; \
+	  eval $$(opam env); \
 	  opam install . --deps-only --locked -y; \
 	else \
 	  echo "==> Creating opam switch..."; \
-	  opam switch create . --deps-only --locked -y; \
+	  opam switch create . ocaml-base-compiler.5.3.0; \
+	  eval $$(opam env); \
+	  opam install . --deps-only --locked -y; \
 	fi

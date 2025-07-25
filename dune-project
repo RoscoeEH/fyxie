@@ -1,6 +1,6 @@
 (lang dune 3.3)
 
-(name TBD)
+(name fixie)
 
 (generate_opam_files true)
 
@@ -16,7 +16,7 @@
 (documentation https://url/to/documentation)
 
 (package
- (name TBD)
+ (name fixie)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends ocaml dune)
