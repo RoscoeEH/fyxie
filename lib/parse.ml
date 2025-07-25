@@ -78,6 +78,8 @@ end = struct
 
   let is_whitespace c = c == ' ' || c == '\t' || c == '\n'
   let is_digit c = Char.compare c '9' <= 0 && Char.compare '0' c <= 0
+  let is_reserved c = match c with
+    | '(' | ')' | '\\' | '?' | '.' | '=' | ':' -> true | _ -> false
   let value_of c = Char.code c - Char.code '0'
 
   let rec get_token () =
@@ -113,7 +115,7 @@ end = struct
     | Some c ->
       let buf = Buffer.create 8 in
       Buffer.add_char buf c;
-      let _ = read_while buf (fun x -> not @@ is_whitespace x) in
+      let _ = read_while buf (fun x -> not (is_whitespace x || is_reserved x)) in
       let str = Buffer.contents buf in
       some @@ Symbol str
   ;;
@@ -175,7 +177,6 @@ module Parse = struct
         match ctx.peeked with
         | x :: xs ->
           let ctx2 = { consumed = x :: ctx.consumed; peeked = xs } in
-          print_endline ("Peeked token " ^ Lex.pp_token x);
           ok (some x, ctx2)
         | [] ->
           let tko = Lex.get_token () in
@@ -183,7 +184,6 @@ module Parse = struct
            | None -> ok (none, ctx)
            | Some tk ->
              let ctx2 = { consumed = tk :: ctx.consumed; peeked = [] } in
-             print_endline ("new token " ^ Lex.pp_token tk);
              ok (some tk, ctx2))
     ;;
 
@@ -309,7 +309,6 @@ module Parse = struct
 
   let parse_expression =
     let parse_expr1 (self: expr t) =
-      print_endline "enter expr1";
       let num = number >>| (fun i -> Lit i) in
       let name = parse_name >>| fun n -> Var n in
       let app = in_parens (
