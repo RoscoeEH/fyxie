@@ -1,4 +1,4 @@
 (executable
- (public_name fixie)
+ (public_name fyxie)
  (name main)
- (libraries fixie))
+ (libraries fyxie))
