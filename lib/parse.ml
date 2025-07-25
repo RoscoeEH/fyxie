@@ -166,25 +166,8 @@ module Parse = struct
 
     type 'a t = ctx -> ('a * ctx, ctx) result
 
-    (*
-     * generic machinery for a y combinator for anonymous recursive functions.
-     * This is required since the naive thing with `let rec` doesn't seem to work
-     * (it doesn't delay the recusion until runtime despite the fact that you are
-     * fundamentally building a continuation. Haskell brain strikes again. :< )
-     *
-     * https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec29-fixpoints/lec29.html
-     * https://gist.github.com/dhil/55cf406865209ab945d8ba1484ea615c
-     *)
-    type 'a fix = Fix of ('a fix -> 'a)
-    let fix x = Fix x
-    let unfix (Fix x) = x
-    let y = fun f ->
-      let g x a =
-        f ((unfix x) x) a
-      in g (fix g)
-
     (* specific monadic version, in signature *)
-    let fix_m f = y f 
+    let fix_m f = Util.y f 
     
     let fail ctx = error ctx
 
@@ -216,9 +199,12 @@ module Parse = struct
     let ( let* ) = bind
 
     let ( <|> ) a b ctx =
-        match a ctx with
+      (* idea is to thread peeked through both, but have consumed be reset for the second alterative *)
+      let ctx' = {consumed=[]; peeked=ctx.peeked} in
+        match a ctx' with
         | Ok (x, ctx2) ->
-          Ok (x, ctx2)
+          let ctx2' = {consumed=ctx2.consumed @ ctx.consumed; peeked=ctx2.peeked} in
+          Ok (x, ctx2')
         | Error ctx2 ->
           let ctx3 =
             { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
