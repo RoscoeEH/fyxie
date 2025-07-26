@@ -9,6 +9,17 @@ open List
 open Array
 open Util.RM
 
+(* Helper for distinguishing partion and total applications
+   can be moved later*)
+let double_array_for_all f a1 a2 =
+  Array.length a1 = Array.length a2
+  &&
+  let rec loop i =
+    if i = Array.length a1 then true else f a1.(i) a2.(i) && loop (i + 1)
+  in
+  loop 0
+;;
+
 type name = string
 
 type type_t =
@@ -231,13 +242,21 @@ and check_app scopes fl args f_t =
   let fl2, args' = (fun (fl, ag) -> fl, of_list ag) (lift fl args) in
   match f_t with
   | Fun_t (fa_t, r_t) ->
-    if length fa_t == length args'
+    let arg_types = Array.map (fun e -> e.tp) args' in
+    let expected_arity = Array.length fa_t in
+    let actual_arity = Array.length arg_types in
+    if expected_arity <> actual_arity
     then
-      if fa_t == Array.map (fun e -> e.tp) args'
-      then fl2, args', r_t
-      else raise (Failure "Argument type doesn't match in function application")
-    else raise (Failure "Wrong number of arguments in function application")
-  | _ -> raise (Failure "Application applied to non function type")
+      raise
+        (Failure
+           (Printf.sprintf
+              "Wrong number of arguments in function application: expected %d, got %d"
+              expected_arity
+              actual_arity));
+    if not (double_array_for_all ( = ) fa_t arg_types)
+    then raise (Failure "Argument types do not match in function application");
+    fl2, args', r_t
+  | _ -> raise (Failure "Attempted to apply a non-function value")
 
 and lift_arms scopes fl arms =
   let helper fl2 arm = from_cst scopes fl2 arm in

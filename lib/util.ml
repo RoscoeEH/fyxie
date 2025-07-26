@@ -1,21 +1,24 @@
 (* Some small modules that show up in other places. Many of them could likely be replaced *)
 
 (*
- * generic machinery for a y combinator for anonymous recursive functions.
+   * generic machinery for a y combinator for anonymous recursive functions.
  * This is required since the naive thing with `let rec` doesn't seem to work
  * (it doesn't delay the recusion until runtime despite the fact that you are
  * fundamentally building a continuation. Haskell brain strikes again. :< )
  *
  * https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec29-fixpoints/lec29.html
  * https://gist.github.com/dhil/55cf406865209ab945d8ba1484ea615c
- *)
+*)
 type 'a fix = Fix of ('a fix -> 'a)
+
 let fix x = Fix x
 let unfix (Fix x) = x
-let y = fun f ->
-  let g x a =
-    f ((unfix x) x) a
-  in g (fix g)
+
+let y =
+  fun f ->
+  let g x a = f ((unfix x) x) a in
+  g (fix g)
+;;
 
 (* couldn't find an existing monad signature for option *)
 module OM = struct

@@ -78,8 +78,13 @@ end = struct
 
   let is_whitespace c = c == ' ' || c == '\t' || c == '\n'
   let is_digit c = Char.compare c '9' <= 0 && Char.compare '0' c <= 0
-  let is_reserved c = match c with
-    | '(' | ')' | '\\' | '?' | '.' | '=' | ':' -> true | _ -> false
+
+  let is_reserved c =
+    match c with
+    | '(' | ')' | '\\' | '?' | '.' | '=' | ':' -> true
+    | _ -> false
+  ;;
+
   let value_of c = Char.code c - Char.code '0'
 
   let rec get_token () =
@@ -169,30 +174,29 @@ module Parse = struct
     type 'a t = ctx -> ('a * ctx, ctx) result
 
     (* specific monadic version, in signature *)
-    let fix_m f = Util.y f 
-    
+    let fix_m f = Util.y f
     let fail ctx = error ctx
 
     let next ctx =
-        match ctx.peeked with
-        | x :: xs ->
-          let ctx2 = { consumed = x :: ctx.consumed; peeked = xs } in
-          ok (some x, ctx2)
-        | [] ->
-          let tko = Lex.get_token () in
-          (match tko with
-           | None -> ok (none, ctx)
-           | Some tk ->
-             let ctx2 = { consumed = tk :: ctx.consumed; peeked = [] } in
-             ok (some tk, ctx2))
+      match ctx.peeked with
+      | x :: xs ->
+        let ctx2 = { consumed = x :: ctx.consumed; peeked = xs } in
+        ok (some x, ctx2)
+      | [] ->
+        let tko = Lex.get_token () in
+        (match tko with
+         | None -> ok (none, ctx)
+         | Some tk ->
+           let ctx2 = { consumed = tk :: ctx.consumed; peeked = [] } in
+           ok (some tk, ctx2))
     ;;
 
     let return a ctx = ok (a, ctx)
 
     let bind a f ctx =
-        match a ctx with
-        | Error c -> Error c
-        | Ok (x, ctx2) -> (f x) ctx2
+      match a ctx with
+      | Error c -> Error c
+      | Ok (x, ctx2) -> (f x) ctx2
     ;;
 
     let ( >>= ) = bind
@@ -200,23 +204,22 @@ module Parse = struct
 
     let ( <|> ) a b ctx =
       (* idea is to thread peeked through both, but have consumed be reset for the second alterative *)
-      let ctx' = {consumed=[]; peeked=ctx.peeked} in
-        match a ctx' with
-        | Ok (x, ctx2) ->
-          let ctx2' = {consumed=ctx2.consumed @ ctx.consumed; peeked=ctx2.peeked} in
-          Ok (x, ctx2')
-        | Error ctx2 ->
-          let ctx3 =
-            { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
-          in
-          b ctx3
+      let ctx' = { consumed = []; peeked = ctx.peeked } in
+      match a ctx' with
+      | Ok (x, ctx2) ->
+        let ctx2' = { consumed = ctx2.consumed @ ctx.consumed; peeked = ctx2.peeked } in
+        Ok (x, ctx2')
+      | Error ctx2 ->
+        let ctx3 =
+          { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
+        in
+        b ctx3
     ;;
 
     let map f a = a >>= fun v -> return @@ f v
     let ( >>| ) a f = map f a
     let seq a b = a >>= fun _ -> b
     let ( >> ) = seq
-
     let empty_context = { consumed = []; peeked = [] }
   end
 
@@ -266,7 +269,8 @@ module Parse = struct
   let rec many p =
     (let* x = p in
      let* tail = many p in
-     return (x :: tail)) <|> return []
+     return (x :: tail))
+    <|> return []
   ;;
 
   let many1 p =
@@ -282,16 +286,17 @@ module Parse = struct
     let* _ = literal CParen in
     return v
   ;;
-  
+
   let parse_type =
-    let parse_type1 (self: type_t t) =
+    let parse_type1 (self : type_t t) =
       let base = literal (Symbol "Int") >> return Int_t in
-      let func = in_parens 
-        (let* types = many self >>| List.rev in
-          match types with
-          | final :: (_penult :: _rest as args) ->
-            return @@ Fun_t (Array.of_list @@ List.rev args, final)
-          | _ -> fail)
+      let func =
+        in_parens
+          (let* types = many self >>| List.rev in
+           match types with
+           | final :: (_penult :: _rest as args) ->
+             return @@ Fun_t (Array.of_list @@ List.rev args, final)
+           | _ -> fail)
       in
       base <|> func
     in
@@ -299,41 +304,49 @@ module Parse = struct
   ;;
 
   let parse_name = lstring
-  
+
   let parse_binding =
     let* l = parse_name in
-    literal Colon >>
+    literal Colon
+    >>
     let* tp = parse_type in
     return (l, tp)
   ;;
 
   let parse_expression =
-    let parse_expr1 (self: expr t) =
-      let num = number >>| (fun i -> Lit i) in
+    let parse_expr1 (self : expr t) =
+      let num = number >>| fun i -> Lit i in
       let name = parse_name >>| fun n -> Var n in
-      let app = in_parens (
-          let* inner = many1 self in
-          return (App (List.hd inner, List.tl inner))
-        ) in
+      let app =
+        in_parens
+          (let* inner = many1 self in
+           return (App (List.hd inner, List.tl inner)))
+      in
       let lam =
-        literal Lambda >>
+        literal Lambda
+        >>
         let* binds = many1 parse_binding in
-        literal Dot >>
+        literal Dot
+        >>
         let* body = self in
         return @@ Fun (binds, body)
       in
       let l_block =
-        literal Question >>
-        let* assigns = in_parens (
-            let parse_assignment =
-              let* bind = parse_binding in
-              literal Equal >>
-              let* expr = self in
-              return (bind, expr)
-            in
-            many1 @@ parse_assignment
-          ) in
-        literal Dot >>
+        literal Question
+        >>
+        let* assigns =
+          in_parens
+            (let parse_assignment =
+               let* bind = parse_binding in
+               literal Equal
+               >>
+               let* expr = self in
+               return (bind, expr)
+             in
+             many1 @@ parse_assignment)
+        in
+        literal Dot
+        >>
         let* body = self in
         return @@ Let (assigns, body)
       in

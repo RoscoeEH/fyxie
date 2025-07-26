@@ -41,9 +41,9 @@ let rec pp_expr e =
     ^ pp_expr body
   | Let (binds, body) ->
     List.fold_left
-        (fun acc (b, v) -> acc ^ "  " ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
-        "let\n"
-        binds
+      (fun acc (b, v) -> acc ^ "  " ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
+      "let\n"
+      binds
     ^ ". "
     ^ pp_expr body
 ;;

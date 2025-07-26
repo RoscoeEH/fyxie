@@ -1,5 +1,3 @@
-
-
 let () = print_endline "test top"
 
 (* TODO
@@ -7,7 +5,7 @@ let () = print_endline "test top"
  * fix this to not use run_empty, since we should be threading the
  * monad through and/or change it to not be a delayed computation.
  *
- *)
+*)
 let get_next_expr () =
   let _ = Parse.Parse.Parser.empty_context in
   let e = Parse.Parse.parse_expression in
@@ -18,12 +16,12 @@ let get_next_expr () =
     print_endline s;
     v
   | Error _ -> raise @@ Failure "Failed to parse expression"
+;;
 
 let _ = get_next_expr ()
-
 let _ = print_endline "ended"
 (*
- * let process cst_e =
+   * let process cst_e =
  *   let (_, ast_e) = Ast.from_cst [] [] cst_e in
  *   print_string "AST ";
  *   print_endline (Ast.pp_expr ast_e);
@@ -39,4 +37,4 @@ let _ = print_endline "ended"
  *   process e
  * 
  * let () = run1 ()
- *)
+*)
