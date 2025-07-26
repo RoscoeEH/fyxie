@@ -98,37 +98,36 @@ and expr =
   }
 
 let pp_name n = n
-let pp_lit l = string_of_int l.value
+let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
 
 let rec pp_type t =
   match t with
   | Int_t -> "Int"
   | Fun_t (args, result) ->
     Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
-    ^ ") "
     ^ pp_type result
+    ^ ")"
 ;;
 
-let pp_binding b = pp_name b.b_name ^ ":" ^ pp_type b.b_tp
-let pp_vref v = "{" ^ pp_name v.v_name ^ "@" ^ string_of_int v.v_slot ^ "}"
+let pp_binding b = pp_name b.b_name ^ " : " ^ pp_type b.b_tp
+let pp_vref v = "{" ^ pp_name v.v_name ^ " @ " ^ string_of_int v.v_slot ^ "}"
 
 let rec pp_func f =
-  Array.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ" f.f_args
-  ^ "["
-  ^ Array.fold_left (fun acc (b, _i) -> acc ^ pp_binding b ^ " ") "" f.captures
+  Array.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ " f.f_args
+  ^ Array.fold_left (fun acc (b, _i) -> acc ^ pp_binding b ^ " ") "[ " f.captures
   ^ "] . "
   ^ pp_expr f.f_body
 
 and pp_let l =
   Array.fold_left
-    (fun acc (b, v) -> acc ^ pp_binding b ^ "=" ^ pp_expr v ^ "\n")
+    (fun acc (b, v) -> acc ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
     "let "
     l.binds
   ^ " . "
   ^ pp_expr l.l_body
 
 and pp_app a =
-  Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("(" ^ pp_expr a.func) a.a_args
+  Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("( " ^ pp_expr a.func ^ " ") a.a_args
   ^ ")"
 
 and pp_expr e =
@@ -140,7 +139,7 @@ and pp_expr e =
     | App a -> pp_app a
     | Lit l -> pp_lit l
   in
-  "{" ^ s ^ ":" ^ pp_type e.tp ^ "}"
+  "{" ^ s ^ " : " ^ pp_type e.tp ^ "}"
 ;;
 
 (* simple lifts from cst to ast types *)

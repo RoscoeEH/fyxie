@@ -61,7 +61,7 @@ module BC = struct
   let from_int_as_num i = Num (Int.shift_left i 1)
   let from_int_as_ptr i = Num (Int.logor (Int.shift_left i 1) 1)
 
-  let pretty_print_op o =
+  let pp_op o =
     match o with
     | PushLit i -> "pushlit " ^ string_of_int i
     | ResStack i -> "ressp " ^ string_of_int i
@@ -78,10 +78,10 @@ module BC = struct
     | Jump i -> "jump " ^ string_of_int i
   ;;
 
-  let pretty_print_slot s =
+  let pp_slot s =
     match s with
     | Num i -> string_of_int i
-    | Op o -> pretty_print_op o
+    | Op o -> pp_op o
   ;;
 
   (* codes *)
