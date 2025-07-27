@@ -156,8 +156,19 @@ let matching_binding n (scope : binding array) =
   | Some idx -> Some (scope.(idx), idx)
 ;;
 
+let pp_scopes scopes =
+  print_endline "Scopes list";
+  let _ = 
+    List.map (fun b ->
+        let _ = Array.map (fun b -> print_endline @@ pp_binding b) b in
+        print_endline "") scopes
+  in ()
+
+
 (* fetch a binding from a scope, and return it along with some indexing info *)
 let lookup_name name (scopes : binding array list) =
+  print_endline "lookup in: ";
+  pp_scopes scopes;
   let helper acc s =
     match acc with
     | Ok v -> Ok v
@@ -184,6 +195,8 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
     let a_binds = of_list binds in
     let arms = Array.map (fun (_bind, expr) -> expr) a_binds in
     let binds' = Array.map (fun (b, _expr) -> from_cst_binding b) a_binds in
+    print_endline "let with scopes:";
+    pp_scopes (binds' :: scopes);
     let fl2, body' = from_cst (binds' :: scopes) free_list body in
     let fl3, arms' = lift_arms scopes fl2 arms in
     ( fl3
@@ -191,6 +204,8 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
       ; inner = Let { l_body = body'; binds = Array.combine binds' arms' }
       } )
   | Cst.App (func, args) ->
+    print_endline "app with scope";
+    pp_scopes scopes;
     let fl2, func' = from_cst scopes free_list func in
     let fl3, args', r_t = check_app scopes fl2 args func'.tp in
     let a_t = Fun_t (Array.map (fun a -> a.tp) args', r_t) in
@@ -232,9 +247,15 @@ and check_app scopes fl args f_t =
   | Fun_t (fa_t, r_t) ->
     if length fa_t == length args'
     then
-      if fa_t == Array.map (fun e -> e.tp) args'
+      let arg_types = Array.map (fun e -> e.tp) args' in
+      if fa_t = arg_types
       then fl2, args', r_t
-      else raise (Failure "Argument type doesn't match in function application")
+      else
+        let expected_types = Array.fold_left (fun acc t -> acc ^ pp_type t ^ " ") "" arg_types in
+        let got_types = Array.fold_left (fun acc t -> acc ^ pp_type t ^ " ") "" fa_t in
+        let msg = Printf.sprintf "Argument type doesn't match in function application expected %sreceived %s"
+            expected_types got_types in
+        raise (Failure msg)
     else raise (Failure "Wrong number of arguments in function application")
   | _ -> raise (Failure "Application applied to non function type")
 
