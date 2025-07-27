@@ -57,57 +57,61 @@ module OM = struct
 end
 
 (* monad sig for result *)
-module RM = struct
-  open Result
+(*
+ * module RM = struct
+ *   open Result
+ * 
+ *   type e
+ *   type 'a t = ('a, e) result
+ * 
+ *   let bind a f =
+ *     match a with
+ *     | Error e -> Error e
+ *     | Ok v -> f v
+ *   ;;
+ * 
+ *   let ( >>= ) = bind
+ *   let return a = Ok a
+ * 
+ *   let map f a =
+ *     match a with
+ *     | Error e -> Error e
+ *     | Ok v -> Ok (f v)
+ *   ;;
+ * 
+ *   let ( >>| ) a f = map f a
+ * 
+ *   let ( <|> ) a b =
+ *     match a with
+ *     | Ok a -> Ok a
+ *     | Error _ -> b
+ *   ;;
+ * 
+ *   let ( >> ) a b =
+ *     match a with
+ *     | Error e -> Error e
+ *     | Ok _ -> b
+ *   ;;
+ * 
+ *   let ( let* ) a f = bind a f
+ * 
+ *   let map_err f a =
+ *     match a with
+ *     | Ok v -> Ok v
+ *     | Error e -> Error (f e)
+ *   ;;
+ * 
+ * end
+ *)
 
-  type e
-  type 'a t = ('a, e) result
-
-  let bind a f =
-    match a with
-    | Error e -> Error e
-    | Ok v -> f v
-  ;;
-
-  let ( >>= ) = bind
-  let return a = Ok a
-
-  let map f a =
-    match a with
-    | Error e -> Error e
-    | Ok v -> Ok (f v)
-  ;;
-
-  let ( >>| ) a f = map f a
-
-  let ( <|> ) a b =
-    match a with
-    | Ok a -> Ok a
-    | Error _ -> b
-  ;;
-
-  let ( >> ) a b =
-    match a with
-    | Error e -> Error e
-    | Ok _ -> b
-  ;;
-
-  let ( let* ) a f = bind a f
-
-  let map_err f a =
-    match a with
-    | Ok v -> Ok v
-    | Error e -> Error (f e)
-  ;;
-
-  (* Collects Ok values, stops on an Error *)
-  let sequence (lst : ('a, 'e) result list) =
-    let cons_ok (elm : ('a, 'e) result) (acc : ('a list, 'e) result) =
-      let* a = acc in
-      let* e = elm in
-      Ok (e :: a)
-    in
-    let (init : ('a list, 'e) result) = Ok [] in
-    List.fold_right cons_ok lst init
-  ;;
-end
+(* Collects Ok values, stops on an Error *)
+let sequence (lst : ('a, 'e) result list) =
+  let cons_ok (elm : ('a, 'e) result) (acc : ('a list, 'e) result) =
+    match elm, acc with
+    | Ok i, Ok j -> Ok (i :: j)
+    | Error e, _ -> Error e
+    | _, Error e -> Error e
+  in
+  let (init : ('a list, 'e) result) = Ok [] in
+  List.fold_right cons_ok lst init
+;;

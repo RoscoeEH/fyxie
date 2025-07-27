@@ -7,7 +7,6 @@
 open Result
 open List
 open Array
-open Util.RM
 
 (* Helper for distinguishing partion and total applications
    can be moved later*)
@@ -153,6 +152,15 @@ let rec from_cst_type t =
 
 let from_cst_binding ((n, t) : Cst.binding) = { b_name = n; b_tp = from_cst_type t }
 
+let pp_scopes scopes =
+  print_endline "Scopes list";
+  let _ = 
+    List.map (fun b ->
+        let _ = Array.map (fun b -> print_endline @@ pp_binding b) b in
+        print_endline "") scopes
+  in ()
+;;
+
 let find_index pred (arr : 'a array) : int option =
   let len = Array.length arr in
   let rec loop i =
@@ -167,15 +175,6 @@ let matching_binding n (scope : binding array) =
   | Some idx -> Some (scope.(idx), idx)
 ;;
 
-let pp_scopes scopes =
-  print_endline "Scopes list";
-  let _ = 
-    List.map (fun b ->
-        let _ = Array.map (fun b -> print_endline @@ pp_binding b) b in
-        print_endline "") scopes
-  in ()
-
-
 (* fetch a binding from a scope, and return it along with some indexing info *)
 let lookup_name name (scopes : binding array list) =
   print_endline "lookup in: ";
@@ -189,7 +188,7 @@ let lookup_name name (scopes : binding array list) =
        | Some (b, i) -> Ok (b, n + i))
   in
   let r = List.fold_left helper (Error 0) scopes in
-  map_err (fun _ -> name ^ " not defined") r
+  map_error (fun _ -> name ^ " not defined") r
 ;;
 
 (* TODO this is still not great but it it is better.
