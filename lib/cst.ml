@@ -34,7 +34,7 @@ let rec pp_expr e =
   | Lit i -> string_of_int i
   | Var n -> pp_name n
   | App (f, aps) ->
-    "( " ^ List.fold_left (fun acc arg -> acc ^ pp_expr arg ^ " ") (pp_expr f) aps ^ ")"
+    "( " ^ List.fold_left (fun acc arg -> acc ^ pp_expr arg ^ " ") (pp_expr f ^ " ") aps ^ ")"
   | Fun (binds, body) ->
     List.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ " binds
     ^ ". "

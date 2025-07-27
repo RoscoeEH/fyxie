@@ -105,8 +105,8 @@ module Tracker : CompTracker with type op := BC.op = struct
       in
       let v, inner_ctx2 = m.run inner_ctx in
       let inner_ptr = length ctx.target + ctx.code_offset in
-      let next_ptr = ctx.code_offset + length inner_ctx2.target in
-      (emit (BC.jump next_ptr)
+      let jump_offset = length inner_ctx2.target in
+      (emit (BC.jump jump_offset)
        >>= fun () ->
        append ctx.target inner_target;
        return (v, inner_ptr))
@@ -188,9 +188,8 @@ end = struct
     | Let l ->
       let* rt_off_prior = stack_offset in
       let arm_helper _i _acc (_bind, arm) = compile arm in
-      fold_right_mi arm_helper (return ()) l.binds
-      >> compile l.l_body
-      >>
+      fold_right_mi arm_helper (return ()) l.binds >>
+      compile l.l_body >>
       let* rt_off_after = stack_offset in
       let diff = rt_off_after - rt_off_prior in
       emit (set_stack_x diff) >> emit (drop diff)
@@ -198,42 +197,34 @@ end = struct
       let n_args = Array.length f.f_args in
       let n_caps = Array.length f.captures in
       let closure_size = n_caps + 1 in
-      emit (alloc (1 + closure_size))
-      >> emit (push_lit closure_size)
-      >> emit (fetch_stack 1)
-      >> emit (set_x_y 0)
-      >>
+      emit (alloc (1 + closure_size)) >>
+      emit (push_lit closure_size) >>
+      emit (fetch_stack 1) >>
+      emit (set_x_y 0) >>
       (* wrote the closure size to heap *)
       let* ptr_off = stack_offset in
       let populate_captures i (_, origin_slot) _acc =
         let* off = stack_offset in
-        emit (fetch_stack (off - ptr_off))
-        >>
+        emit (fetch_stack (off - ptr_off)) >>
         (* copied closure ptr to top *)
         let* off = stack_offset in
-        emit (fetch_stack (off + origin_slot))
-        >>
+        emit (fetch_stack (off + origin_slot)) >>
         (* copied closure val to top *)
-        emit (set_x_y (i + 1))
-        >>
+        emit (set_x_y (i + 1)) >>
         (* wrote captured val to heap closure *)
         return ()
       in
-      fold_left_mi populate_captures (return ()) f.captures
-      >>
+      fold_left_mi populate_captures (return ()) f.captures >>
       let func_body_with_boilerplate =
-        emit (set_stack_x (n_caps + n_args + 1))
-        >>
+        emit (set_stack_x (n_caps + n_args + 1)) >>
         (* wrote the return addr back above the args and captures,
          * reserved by caller *)
-        compile f.f_body
-        >>
+        compile f.f_body >>
         (* the good stuff *)
-        emit (set_stack_x (n_caps + n_args + 2))
-        >>
+        emit (set_stack_x (n_caps + n_args + 2)) >>
         (* wrote the return value back above, same deal *)
-        emit (drop (n_caps + n_args))
-        >> emit return_x
+        emit (drop (n_caps + n_args)) >>
+        emit return_x
       in
       let* _, code_ptr = out_of_line func_body_with_boilerplate in
       emit (fetch_stack 0)
