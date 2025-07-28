@@ -150,7 +150,7 @@ end
 module Parse = struct
   module Parser : sig
     type ctx
-    type 'a t = ctx -> ('a * ctx, ctx) result
+    type 'a t = ctx -> ('a * ctx, string * ctx) result
 
     val return : 'a -> 'a t
     val bind : 'a t -> ('a -> 'b t) -> 'b t
@@ -163,7 +163,7 @@ module Parse = struct
     val ( >> ) : 'a t -> 'b t -> 'b t
     val empty_context : ctx
     val next : Lex.token option t
-    val fail : 'a t
+    val fail : string -> 'a t
     val fix_m : ('a t -> 'a t) -> 'a t
   end = struct
     type ctx =
@@ -171,11 +171,12 @@ module Parse = struct
       ; peeked : Lex.token list
       }
 
-    type 'a t = ctx -> ('a * ctx, ctx) result
+    type 'a t = ctx -> ('a * ctx, string * ctx) result
 
     (* specific monadic version, in signature *)
-    let fix_m f = Util.y f
-    let fail ctx = error ctx
+    let fix_m f = Util.y f 
+    
+    let fail msg ctx = error (msg,ctx)
 
     let next ctx =
       match ctx.peeked with
@@ -204,16 +205,16 @@ module Parse = struct
 
     let ( <|> ) a b ctx =
       (* idea is to thread peeked through both, but have consumed be reset for the second alterative *)
-      let ctx' = { consumed = []; peeked = ctx.peeked } in
-      match a ctx' with
-      | Ok (x, ctx2) ->
-        let ctx2' = { consumed = ctx2.consumed @ ctx.consumed; peeked = ctx2.peeked } in
-        Ok (x, ctx2')
-      | Error ctx2 ->
-        let ctx3 =
-          { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
-        in
-        b ctx3
+      let ctx' = {consumed=[]; peeked=ctx.peeked} in
+        match a ctx' with
+        | Ok (x, ctx2) ->
+          let ctx2' = {consumed=ctx2.consumed @ ctx.consumed; peeked=ctx2.peeked} in
+          Ok (x, ctx2')
+        | Error (msg1, ctx2) ->
+          let ctx3 =
+            { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
+          in
+          b ctx3 |> Result.map_error @@ fun (msg2, c) -> "Alternative failed:\n  " ^ msg1 ^ "\nand\n  " ^ msg2 , c
     ;;
 
     let map f a = a >>= fun v -> return @@ f v
@@ -228,22 +229,27 @@ module Parse = struct
   let literal l =
     let* n = next in
     match n with
-    | Some s -> if s = l then return l else fail
-    | _ -> fail
+    | Some s ->
+      if s = l
+      then return l
+      else fail @@ "Expected " ^ Lex.pp_token l ^ " got " ^ Lex.pp_token s
+    | _ -> fail "Unexpected EOF"
   ;;
 
   let symbol =
     let* n = next in
     match n with
     | Some (Symbol s) -> return s
-    | _ -> fail
+    | None -> fail "Unexpected EOF"
+    | Some t -> fail @@ "Expected symbol got " ^ Lex.pp_token t
   ;;
 
   let number =
     let* n = next in
     match n with
     | Some (Number i) -> return i
-    | _ -> fail
+    | None -> fail "Unexpected EOF"
+    | Some t -> fail @@ "Expected number got " ^ Lex.pp_token t
   ;;
 
   let ustring =
@@ -252,8 +258,8 @@ module Parse = struct
     | Some (c, _) ->
       if Char.code c >= Char.code 'A' && Char.code c <= Char.code 'Z'
       then return s
-      else fail
-    | None -> fail
+      else fail @@ "Symbol " ^ s ^ " not uppercase"
+    | None -> fail @@ "Unexpected empty string. This shouldn't happen"
   ;;
 
   let lstring =
@@ -262,8 +268,8 @@ module Parse = struct
     | Some (c, _) ->
       if Char.code c < Char.code 'A' || Char.code c > Char.code 'Z'
       then return s
-      else fail
-    | None -> fail
+      else fail @@ "Symbol " ^ s ^ " not uppercase"
+    | None -> fail "Unexpected empty string. This shouldn't happen"
   ;;
 
   let rec many p =
@@ -277,7 +283,8 @@ module Parse = struct
     let* inner = many p in
     match inner with
     | _x :: _xs -> return inner
-    | [] -> fail
+    | [] -> fail "Zero repetitions but one was required."
+    (* TODO more info, but how? *)
   ;;
 
   let in_parens p =
@@ -290,13 +297,12 @@ module Parse = struct
   let parse_type =
     let parse_type1 (self : type_t t) =
       let base = literal (Symbol "Int") >> return Int_t in
-      let func =
-        in_parens
-          (let* types = many self >>| List.rev in
-           match types with
-           | final :: (_penult :: _rest as args) ->
-             return @@ Fun_t (Array.of_list @@ List.rev args, final)
-           | _ -> fail)
+      let func = in_parens 
+        (let* types = many self >>| List.rev in
+          match types with
+          | final :: (_penult :: _rest as args) ->
+            return @@ Fun_t (Array.of_list @@ List.rev args, final)
+          | _ -> fail "Function type with only one element")
       in
       base <|> func
     in

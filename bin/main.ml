@@ -10,8 +10,7 @@ let get_next_expr () =
     print_endline s;
     print_endline "";
     v
-  | Error _ -> raise @@ Failure "Failed to parse expression"
-;;
+  | Error (msg, _ctx) -> raise @@ Failure ("Failed to parse expression: " ^ msg)
 
 let process cst_e =
   let (_, ast_e) = Ast.from_cst [] [] cst_e in
