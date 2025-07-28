@@ -104,7 +104,7 @@ let rec pp_type t =
   | Int_t -> "Int"
   | Fun_t (args, result) ->
     Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
-    ^ pp_type result
+    ^ "-> " ^ pp_type result
     ^ ")"
 ;;
 
@@ -119,10 +119,10 @@ let rec pp_func f =
 
 and pp_let l =
   Array.fold_left
-    (fun acc (b, v) -> acc ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
-    "let "
+    (fun acc (b, v) -> acc ^ "  " ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
+    "let\n"
     l.binds
-  ^ " . "
+  ^ ". "
   ^ pp_expr l.l_body
 
 and pp_app a =
@@ -177,8 +177,10 @@ let matching_binding n (scope : binding array) =
 
 (* fetch a binding from a scope, and return it along with some indexing info *)
 let lookup_name name (scopes : binding array list) =
-  print_endline "lookup in: ";
-  pp_scopes scopes;
+  (*
+   * print_endline @@ "lookup for " ^ name ^ " in: ";
+   * pp_scopes scopes;
+   *)
   let helper acc s =
     match acc with
     | Ok v -> Ok v
@@ -211,7 +213,14 @@ let collect_captures args body =
       cc1 (List.append shadowed_names ignores) inner
   in
   cc1 args body;
-  !captures
+  let o = List.sort_uniq String.compare !captures in
+  (*
+   * print_string "Captured names from: ";
+   * print_endline @@ Cst.pp_expr body;
+   * let _ = List.map (fun n -> print_endline @@ "  " ^ n) o in
+   * print_endline "";
+   *)
+  o
 ;;
 
 
@@ -229,8 +238,10 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
     let a_binds = of_list binds in
     let arms = Array.map (fun (_bind, expr) -> expr) a_binds in
     let binds' = Array.map (fun (b, _expr) -> from_cst_binding b) a_binds in
-    print_endline "let with scopes:";
-    pp_scopes (binds' :: scopes);
+    (*
+     * print_endline "let with scopes:";
+     * pp_scopes (binds' :: scopes);
+     *)
     let fl2, body' = from_cst (binds' :: scopes) free_list body in
     let fl3, arms' = lift_arms scopes fl2 arms in
     ( fl3
@@ -238,8 +249,10 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
       ; inner = Let { l_body = body'; binds = Array.combine binds' arms' }
       } )
   | Cst.App (func, args) ->
-    print_endline "app with scope";
-    pp_scopes scopes;
+    (*
+     * print_endline "app with scope";
+     * pp_scopes scopes;
+     *)
     let fl2, func' = from_cst scopes free_list func in
     let fl3, args', r_t = check_app scopes fl2 args func'.tp in
     let a_t = Fun_t (Array.map (fun a -> a.tp) args', r_t) in
@@ -254,9 +267,17 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
   | Cst.Fun (args, body) ->
     let args' = Array.map from_cst_binding (Array.of_list args) in
     let cap_names = collect_captures (List.map fst args) body in
+    (*
+     * print_endline "in func before lookup";
+     *)
     let cap_sources = Util.sequence @@ List.map (fun n -> lookup_name n scopes) cap_names in
     match cap_sources with
-    | Error e -> raise @@ Failure e
+    | Error e ->
+      (*
+       * print_endline "failed in the cap lookups";
+       * let _ = List.map print_endline cap_names in
+       *)
+      raise @@ Failure e
     | Ok cap_sources ->
       let func_scopes = (Array.of_list @@ List.map fst cap_sources) :: args' :: [] in
       let fl2, body' = from_cst func_scopes [] body in
