@@ -18,6 +18,7 @@ module type CompTracker = sig
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val emit : op -> unit t
   val stack_offset : int t
+  val adjust_stack_offset : int -> unit t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
   val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
   val seq : unit t -> 'b t -> 'b t
@@ -90,6 +91,13 @@ module Tracker : CompTracker with type op := BC.op = struct
 
   let stack_offset =
     let run = fun ctx -> ctx.stack_offset, ctx in
+    { run }
+  ;;
+
+  let adjust_stack_offset i =
+    let run = fun ctx -> (), { code_offset=ctx.code_offset
+                             ; stack_offset=ctx.stack_offset + i
+                             ; target = ctx.target} in
     { run }
   ;;
 
@@ -219,6 +227,8 @@ end = struct
         emit (set_stack_x (n_caps + n_args + 1)) >>
         (* wrote the return addr back above the args and captures,
          * reserved by caller *)
+        adjust_stack_offset 1 >>
+        (* undo stack offset of moving the return addr *)
         compile f.f_body >>
         (* the good stuff *)
         emit (set_stack_x (n_caps + n_args + 2)) >>
