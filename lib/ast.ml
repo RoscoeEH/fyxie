@@ -191,6 +191,30 @@ let lookup_name name (scopes : binding array list) =
   map_error (fun _ -> name ^ " not defined") r
 ;;
 
+let collect_captures args body =
+  let captures = ref [] in
+  let rec cc1 ignores expr =
+    match expr with
+    | Cst.Lit _ -> ()
+    | Cst.Var name ->
+      if List.mem name ignores
+      then ()
+      else captures := name :: !captures
+    | Cst.Let (binds, inner) ->
+      let shadowed_names = List.map (fun ((b, _tp), _arm) -> b) binds in
+      cc1 (List.append shadowed_names ignores) inner
+    | Cst.App (func, args) ->
+      cc1 ignores func;
+      let _ = List.map (cc1 ignores) args in ()
+    | Cst.Fun (binds, inner) ->
+      let shadowed_names = List.map (fun (b, _tp) -> b) binds in
+      cc1 (List.append shadowed_names ignores) inner
+  in
+  cc1 args body;
+  !captures
+;;
+
+
 (* TODO this is still not great but it it is better.
  *
  * It should probably return a result rather than panic.
@@ -229,18 +253,18 @@ let rec from_cst (scopes : binding array list) (free_list : name list) (expr : C
     free_list, { tp = bind.b_tp; inner = Var { v_name = name; v_slot = slot_idx } }
   | Cst.Fun (args, body) ->
     let args' = Array.map from_cst_binding (Array.of_list args) in
-    let fl2, body' = from_cst [ args' ] [] body in
-    let cap_list = List.map (fun n -> lookup_name n scopes) fl2 in
-    let captures =
-      match sequence cap_list with
-      | Error s -> raise (Failure s)
-      | Ok v -> v
-    in
-    let func' =
-      Fun { f_args = args'; f_body = body'; captures = Array.of_list captures }
-    in
-    let func_t = Fun_t (Array.map (fun b -> b.b_tp) args', body'.tp) in
-    List.append free_list fl2, { tp = func_t; inner = func' }
+    let cap_names = collect_captures (List.map fst args) body in
+    let cap_sources = Util.sequence @@ List.map (fun n -> lookup_name n scopes) cap_names in
+    match cap_sources with
+    | Error e -> raise @@ Failure e
+    | Ok cap_sources ->
+      let func_scopes = (Array.of_list @@ List.map fst cap_sources) :: args' :: [] in
+      let fl2, body' = from_cst func_scopes [] body in
+      let func' =
+        Fun { f_args = args'; f_body = body'; captures = Array.of_list cap_sources }
+      in
+      let func_t = Fun_t (Array.map (fun b -> b.b_tp) args', body'.tp) in
+      List.append free_list fl2, { tp = func_t; inner = func' }
 
 and check_app scopes fl args f_t =
   (* checks arity + types, returns (freelist, lifted arg array, output type) or error*)
