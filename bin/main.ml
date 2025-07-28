@@ -5,20 +5,20 @@ let get_next_expr () =
   let e = Parse.Parse.parse_expression in
   match e Parse.Parse.Parser.empty_context with
   | Ok (v, _) ->
-    let s = Cst.pp_expr v in
-    print_string "CST ";
+    let s = Ast.pp_expr v in
+    print_string "AST ";
     print_endline s;
     print_endline "";
     v
   | Error (msg, _ctx) -> raise @@ Failure ("Failed to parse expression: " ^ msg)
 
-let process cst_e =
-  let (_, ast_e) = Ast.from_cst [] [] cst_e in
-  print_string "AST ";
-  print_endline (Ast.pp_expr ast_e);
+let process ast_e =
+  let (_, ir_e) = Ir.from_ast [] [] ast_e in
+  print_string "IR ";
+  print_endline (Ir.pp_expr ir_e);
   print_endline "";
   let open Compile.Compiler in
-  let c_action = compile ast_e in
+  let c_action = compile ir_e in
   let ops = run_empty c_action in
   let strs = Dynarray.mapi (fun i op -> string_of_int i ^ " " ^ Bytecode.BC.pp_op op ^ "\n") ops in
   let s = Dynarray.fold_left (^) "Compiled\n" strs in

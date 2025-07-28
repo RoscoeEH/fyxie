@@ -3,7 +3,7 @@
 open In_channel
 open Option
 open Result
-open Cst
+open Ast
 
 (* Converts strings to concrete tokens *)
 module Lex : sig

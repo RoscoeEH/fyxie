@@ -1,4 +1,4 @@
 (library
  (name fyxie)
  (wrapped false)
- (modules parse cst ast bytecode interpret compile util))
+ (modules parse ast ir bytecode interpret compile util))

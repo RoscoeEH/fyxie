@@ -4,7 +4,7 @@
  *
 *)
 
-open Ast
+open Ir
 open Dynarray
 open Bytecode
 
@@ -129,7 +129,7 @@ module Compiler : sig
   type 'a t
 
   val run_empty : 'a t -> BC.op Dynarray.t
-  val compile : Ast.expr -> unit t
+  val compile : Ir.expr -> unit t
 end = struct
   (* conventions:
    * Every expresion, when evaluated, leaves a single new value on the stack
