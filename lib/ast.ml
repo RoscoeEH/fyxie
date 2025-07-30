@@ -2,10 +2,7 @@
    Define basic structure as a recursive tree type
 *)
 
-(* Make AST handle type checking, closures, and var linking *)
-
-(* TODO update this to something that looks more like a path *)
-type name = string
+open Name
 
 type type_t =
   | Int_t
@@ -72,13 +69,12 @@ let rec pp_type ?(mods = []) t =
     ^ ")"
   | Alias_t s ->
     let b = fetch_nearest_alias s mods in
-    let prefix = "{ Alias : " ^ s ^ " bound to " in
+    let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
     (match b with
      | None -> prefix ^ "nothing }"
      | Some td -> prefix ^ pp_type ~mods td.rhs_t ^ "}")
 ;;
 
-let pp_name s = s
 let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
 let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
 

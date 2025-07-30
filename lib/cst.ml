@@ -7,7 +7,7 @@ type type_t =
   | Int_t
   | Fun_t of type_t array * type_t
 
-type name = string
+type name = Name.name
 type binding = name * type_t
 
 type expr =

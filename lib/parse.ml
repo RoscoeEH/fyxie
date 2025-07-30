@@ -3,7 +3,9 @@
 open In_channel
 open Option
 open Result
+
 open Ast
+open Name
 
 (* Converts strings to concrete tokens *)
 module Lex : sig
@@ -290,6 +292,12 @@ module Parse = struct
     return v
   ;;
 
+  let parse_name =
+    let* s = symbol in
+    match name_of_string s with
+    | Error e -> fail e
+    | Ok v -> return v
+
   let rec parse_type ctx = 
     let base = literal (Symbol "Int") >> return Int_t in
     let func = in_parens 
@@ -299,11 +307,9 @@ module Parse = struct
            return @@ Fun_t (Array.of_list @@ List.rev args, final)
          | _ -> fail "Function type with only one element")
     in
-    let alias = ustring >>| (fun s -> Alias_t s) in
+    let alias = parse_name >>| (fun s -> Alias_t s) in
     ctx |> (base <|> func <|> alias)
   ;;
-
-  let parse_name = lstring
 
   let parse_binding =
     let* l = parse_name in

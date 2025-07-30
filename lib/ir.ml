@@ -8,7 +8,7 @@ open Result
 open List
 open Array
 
-type name = string
+open Name
 
 type type_t =
   | Int_t
@@ -85,7 +85,6 @@ and expr =
   ; inner : content
   }
 
-let pp_name n = n
 let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
 
 let rec pp_type t =
@@ -180,7 +179,7 @@ let lookup_name name (scopes : binding array list) =
        | Some (b, i) -> Ok (b, n + i))
   in
   let r = List.fold_left helper (Error 0) scopes in
-  map_error (fun _ -> name ^ " not defined") r
+  map_error (fun _ -> pp_name name ^ " not defined") r
 ;;
 
 let collect_captures args body =
@@ -203,7 +202,7 @@ let collect_captures args body =
       cc1 (List.append shadowed_names ignores) inner
   in
   cc1 args body;
-  let o = List.sort_uniq String.compare !captures in
+  let o = List.sort_uniq Name.compare !captures in
   (*
    * print_string "Captured names from: ";
    * print_endline @@ Ast.pp_expr body;
