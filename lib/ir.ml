@@ -137,6 +137,7 @@ let rec from_ast_type t =
   match t with
   | Ast.Int_t -> Int_t
   | Ast.Fun_t (args, ret) -> Fun_t (Array.map from_ast_type args, from_ast_type ret)
+  | _ -> raise @@ Failure "TODO implemented from_ast_type for aliases"
 ;;
 
 let from_ast_binding ((n, t) : Ast.binding) = { b_name = n; b_tp = from_ast_type t }
@@ -191,8 +192,8 @@ let collect_captures args body =
       if List.mem name ignores
       then ()
       else captures := name :: !captures
-    | Ast.Let (binds, inner) ->
-      let shadowed_names = List.map (fun ((b, _tp), _arm) -> b) binds in
+    | Ast.Let (assigns, inner) ->
+      let shadowed_names = List.map (let open Ast in fun a -> fst a.lhs) assigns in
       cc1 (List.append shadowed_names ignores) inner
     | Ast.App (func, args) ->
       cc1 ignores func;
@@ -223,10 +224,11 @@ let collect_captures args body =
 let rec from_ast (scopes : binding array list) (free_list : name list) (expr : Ast.expr) =
   match expr with
   | Ast.Lit v -> free_list, { tp = Int_t; inner = Lit { value = v } }
-  | Ast.Let (binds, body) ->
-    let a_binds = of_list binds in
-    let arms = Array.map (fun (_bind, expr) -> expr) a_binds in
-    let binds' = Array.map (fun (b, _expr) -> from_ast_binding b) a_binds in
+  | Ast.Let (assigns, body) ->
+    let open Ast in
+    let a_assigns = of_list assigns in
+    let arms = Array.map (fun a -> a.rhs) a_assigns in
+    let binds' = Array.map (fun a -> from_ast_binding a.lhs) a_assigns in
     (*
      * print_endline "let with scopes:";
      * pp_scopes (binds' :: scopes);

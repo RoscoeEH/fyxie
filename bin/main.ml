@@ -1,9 +1,9 @@
 
 
 let get_next_expr () =
-  let _ = Parse.Parse.Parser.empty_context in
+  let _ = Parse.Parse.empty_context in
   let e = Parse.Parse.parse_expression in
-  match e Parse.Parse.Parser.empty_context with
+  match e Parse.Parse.empty_context with
   | Ok (v, _) ->
     let s = Ast.pp_expr v in
     print_string "AST ";
