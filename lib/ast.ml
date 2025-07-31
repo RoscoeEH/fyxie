@@ -1,7 +1,8 @@
 (*
    Define basic structure as a recursive tree type
 *)
-
+open Option
+    
 open Name
 
 type type_t =
@@ -28,6 +29,11 @@ and expr =
   | App of expr * expr list
   | Lit of int
 
+type top_level =
+  | TL_td of type_def
+  | TL_at of assignment
+  | TL_ex of expr
+
 (* TODO module signatures.
  *
  * Think C header files, gives a set of type aliases and a set of
@@ -39,17 +45,31 @@ and expr =
  * is in the module.
  *
  * Also at least to start have modules w/ signitures not hide internal
- * details, ie you can reference things that aren't in the signiture
- * and type internals and stuff, again C style.
-*)
-
+ * details, ie you can reference things that aren't in the signature
+ * and type internals and stuff, again C style. 
+ *)
+      
 type mod_t =
   { (* TODO mod level deps *)
-    types : type_def list
-  ; assigns : assignment list
+    mod_name : name option
+  ; top : top_level list
   }
 
-let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) m.types
+let mod_types m =
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_td td -> some td
+      | _ -> none) m.top
+;;
+
+let mod_assigns m = 
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_at at -> some at
+      | _ -> none) m.top
+;;
+
+let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) @@ mod_types m
 
 let rec fetch_nearest_alias s ms =
   match ms with
@@ -98,9 +118,15 @@ and pp_expr e =
     ^ pp_expr body
 ;;
 
+let pp_top_level tl = match tl with
+  | TL_td td -> pp_type_def td
+  | TL_at at -> pp_assignment at
+  | TL_ex ex -> pp_expr ex
+;;
+
 let pp_mod m =
-  let prefix = "{Module with types:\n" in
-  let types = List.fold_left (fun acc t -> acc ^ pp_type_def t ^ "\n") "" m.types in
-  let assigns = List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "" m.assigns in
+  let prefix = "{Module :\n" in
+  let types = List.fold_left (fun acc t ->  acc ^ pp_type_def t ^ "\n") "" @@ mod_types m in
+  let assigns = List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "" @@ mod_assigns m in
   prefix ^ types ^ "And assignments:\n" ^ assigns ^ "}"
 ;;
