@@ -37,52 +37,49 @@ module OM = struct
 end
 
 (* monad sig for result *)
-(*
- * module RM = struct
- *   open Result
- * 
- *   type e
- *   type 'a t = ('a, e) result
- * 
- *   let bind a f =
- *     match a with
- *     | Error e -> Error e
- *     | Ok v -> f v
- *   ;;
- * 
- *   let ( >>= ) = bind
- *   let return a = Ok a
- * 
- *   let map f a =
- *     match a with
- *     | Error e -> Error e
- *     | Ok v -> Ok (f v)
- *   ;;
- * 
- *   let ( >>| ) a f = map f a
- * 
- *   let ( <|> ) a b =
- *     match a with
- *     | Ok a -> Ok a
- *     | Error _ -> b
- *   ;;
- * 
- *   let ( >> ) a b =
- *     match a with
- *     | Error e -> Error e
- *     | Ok _ -> b
- *   ;;
- * 
- *   let ( let* ) a f = bind a f
- * 
- *   let map_err f a =
- *     match a with
- *     | Ok v -> Ok v
- *     | Error e -> Error (f e)
- *   ;;
- * 
- * end
- *)
+module RM = struct
+  open Result
+
+  type e
+  type 'a t = ('a, e) result
+
+  let bind a f =
+    match a with
+    | Error e -> Error e
+    | Ok v -> f v
+  ;;
+
+  let ( >>= ) = bind
+  let return a = Ok a
+
+  let map f a =
+    match a with
+    | Error e -> Error e
+    | Ok v -> Ok (f v)
+  ;;
+
+  let ( >>| ) a f = map f a
+
+  let ( <|> ) a b =
+    match a with
+    | Ok a -> Ok a
+    | Error _ -> b
+  ;;
+
+  let ( >> ) a b =
+    match a with
+    | Error e -> Error e
+    | Ok _ -> b
+  ;;
+
+  let ( let* ) a f = bind a f
+
+  let map_err f a =
+    match a with
+    | Ok v -> Ok v
+    | Error e -> Error (f e)
+  ;;
+end
 
 (* Collects Ok values, stops on an Error *)
 let sequence (lst : ('a, 'e) result list) =
@@ -94,6 +91,20 @@ let sequence (lst : ('a, 'e) result list) =
   in
   let (init : ('a list, 'e) result) = Ok [] in
   List.fold_right cons_ok lst init
+;;
+
+let sequence_arr (arr : ('a, 'e) result array) =
+  let open Result in
+  let helper acc a =
+    match acc with
+    | Error e -> error e
+    | Ok () -> (match a with
+        | Error e -> error e
+        | Ok _ -> ok ())
+  in
+  match Array.fold_left helper (ok ()) arr with
+  | Error e -> error e
+  | Ok () -> ok @@ Array.map Result.get_ok arr
 ;;
 
 (* Pretty printing *)

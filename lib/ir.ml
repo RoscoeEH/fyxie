@@ -1,5 +1,6 @@
 
-open Option 
+open Option
+open Result
 open List
 open Array
 
@@ -79,19 +80,19 @@ let mod_types m =
       | _ -> none) @@ to_list m.top
 ;;
 
-let mod_assigns m = 
+let mod_assigns m =
   List.filter_map (fun tl ->
       match tl with
       | TL_an at -> some at
       | _ -> none) @@ to_list m.top
 ;;
 
-let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) @@ mod_types m
+let fetch_alias s defs = List.find_opt (fun td -> td.lhs_t = s) defs
 
 let rec fetch_nearest_alias s ms =
   match ms with
   | [] -> None
-  | m::rest -> (match fetch_alias s m with
+  | m::rest -> (match fetch_alias s @@ mod_types m with
     | Some v -> Some v
     | None -> fetch_nearest_alias s rest)
 ;;
@@ -119,10 +120,10 @@ module PrettyPrint = struct
     | Local -> "local"
     | Closure -> "closure"
   ;;
-  
+
   let pp_var v =
-    "{" 
-    ^ pp_name v.v_name 
+    "{"
+    ^ pp_name v.v_name
     ^ " : " ^ pp_type v.v_tp
     ^ " in " ^ pp_domain v.v_domain
     ^ " @ " ^ string_of_int v.v_id
@@ -160,14 +161,48 @@ module PrettyPrint = struct
 
   let pp_scopes scopes =
     print_endline "Scopes list";
-    let _ = 
+    let _ =
       List.map (fun b ->
           let _ = Array.map (fun b -> print_endline @@ pp_var b) b in
           print_endline "") scopes
     in ()
   ;;
 end
-open PrettyPrint 
+open PrettyPrint
+
+let unify_types ?(defs = []) a b =
+  (* just a better eq check atm, more later *)
+  let open Util.RM in
+  let rec ut1 a b =
+    match (a,b) with
+    | (Int_t, Int_t) -> ok a
+    | (Fun_t (aa, ar), Fun_t (ba, br)) ->
+      let arg_ms' = Array.map2 ut1 aa ba in
+      (let* args' = Util.sequence_arr arg_ms' in
+       let* r' = ut1 ar br in
+       return @@ Fun_t (args', r'))
+      |> Result.map_error (fun e ->
+          "When unifying "
+          ^ pp_type a
+          ^ "\nand\n"
+          ^ pp_type b
+          ^ "\nencountered\n"
+          ^ e)
+    | (Alias_t an, Alias_t bn) ->
+      (match fetch_alias an defs with
+       | None -> error (pp_name an ^ " Undefined")
+       | Some a' -> (match fetch_alias bn defs with
+           | None -> error (pp_name bn ^ " Undefined")
+           | Some b' -> ut1 a'.rhs_t b'.rhs_t))
+    | (_,_) ->
+      error ("Types\n"
+             ^ pp_type a
+             ^ "\nand\n"
+             ^ pp_type b
+             ^ "don't match")
+  in
+  ut1 a b
+;;
 
 let collect_captures args body =
   let captures = ref [] in
@@ -195,15 +230,15 @@ let collect_captures args body =
 let rec from_ast_type ?(defs=[]) at =
   match at with
   | Ast.Int_t -> Int_t
-  | Ast.Fun_t (args, ret) -> 
+  | Ast.Fun_t (args, ret) ->
     let args' = Array.map (fun a -> from_ast_type ~defs a) args in
     Fun_t (args', from_ast_type ~defs ret)
-  | Ast.Alias_t n -> 
+  | Ast.Alias_t n ->
     match List.find_opt (fun td -> td.lhs_t = n) defs with
     | Some td -> td.rhs_t
     | None -> raise @@ Failure ("Type alias " ^ pp_name n ^ " not defined")
 ;;
-     
+
 let from_ast_type_def ?(defs=[]) (td : Ast.type_def) =
  {lhs_t=td.lhs_t; rhs_t=from_ast_type ~defs td.rhs_t}
 ;;
@@ -220,12 +255,12 @@ type ctx =
 
 let save ctx =
   (* TODO surely there is a better way for a deep copy? *)
-  { defs            = ctx.defs           
-  ; statics         = ctx.statics        
-  ; static_next_id  = ctx.static_next_id 
-  ; locals          = ctx.locals         
-  ; local_next_id   = ctx.local_next_id  
-  ; closures        = ctx.closures       
+  { defs            = ctx.defs
+  ; statics         = ctx.statics
+  ; static_next_id  = ctx.static_next_id
+  ; locals          = ctx.locals
+  ; local_next_id   = ctx.local_next_id
+  ; closures        = ctx.closures
   ; closure_next_id = ctx.closure_next_id
   }
 ;;
@@ -242,18 +277,18 @@ let restore ~dst ~src =
 ;;
 
 let next_id ctx domain = match domain with
-  | Static -> 
+  | Static ->
     ctx.static_next_id <- ctx.static_next_id+1;
     ctx.static_next_id-1
-  | Local -> 
+  | Local ->
     ctx.local_next_id <- ctx.local_next_id+1;
     ctx.local_next_id-1
-  | Closure -> 
+  | Closure ->
     ctx.closure_next_id <- ctx.closure_next_id+1;
     ctx.closure_next_id-1
 ;;
 
-let insert ctx name tp domain = 
+let insert ctx name tp domain =
   let id = next_id ctx domain in
   let v = {v_name=name; v_tp=tp; v_domain=domain; v_id=id} in
   (match domain with
@@ -271,42 +306,39 @@ let lookup ctx name =
   r
 ;;
 
-let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) = 
+let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
   let (n,tp) = an.lhs in
   let expr = an.rhs in
   let tp' = from_ast_type ~defs:ctx.defs tp in
   let expr' = from_ast_expr ctx expr in
-  let var = insert ctx n tp' domain in 
-  if expr'.tp <> tp'
-  then raise @@ Failure 
-      ("Types don't match in assignment of\n"
-       ^ pp_expr expr' ^ "\nto\n" ^ pp_var var)
-  else {lhs=var; rhs=expr'}
+  let var = insert ctx n tp' domain in
+  match unify_types ~defs:ctx.defs expr'.tp tp' with
+  | Error e -> raise @@ Failure e
+  | Ok _u_tp' -> {lhs=var; rhs=expr'}
 
 and from_ast_expr ctx (expr : Ast.expr) = match expr with
   | Lit i -> {tp=Int_t; inner=Lit {value=i}}
-  | App (func, args) -> 
+  | App (func, args) ->
     let func' = from_ast_expr ctx func in
     let args' = List.map (from_ast_expr ctx) args in
     let (fa_tp, ret_tp) = match func'.tp with
-      | Fun_t (i,o) -> (i, o)
+      | Fun_t (i, o) -> (i, o)
       | _ -> raise @@
         Failure ("Non-func type in application: " ^ pp_type func'.tp)
     in
     let a_tps = Array.of_list @@ List.map (fun a -> a.tp) args' in
-    if fa_tp <> a_tps
-    then 
-      let expected = Array.fold_left 
-          (fun acc p -> acc ^ pp_type p ^ "\n") 
-          "Types don't match in application\n" fa_tp 
-      in 
-      let supplied = Array.fold_left 
-          (fun acc p -> acc ^ pp_type p ^ "\n") 
-          "Provided\n" a_tps
-      in 
-      raise @@ Failure (expected ^ supplied)
-    else 
-      {tp = ret_tp; inner= App {func=func'; a_args=Array.of_list args'}}
+    (match Util.sequence_arr
+             (Array.map2 (unify_types ~defs:ctx.defs) fa_tp a_tps)
+     with
+     | Ok _arg_tps ->
+       {tp = ret_tp; inner= App {func=func'; a_args=Array.of_list args'}}
+     | Error e ->
+       raise @@ Failure (
+         "When applying function\n"
+         ^ pp_expr func'
+         ^ "\ntype error:\n"
+         ^ e
+         ^ " Occured"))
   | Var n -> (match lookup ctx n with
       | Some v -> {tp=v.v_tp; inner=Var v}
       | None -> raise @@ Failure ("Name " ^ pp_name n ^ "not defined"))
@@ -332,8 +364,8 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
 
     ctx.locals <- [];
     ctx.local_next_id <- 0;
-    let lift_arg (n,tp) = 
-      insert ctx n (from_ast_type ~defs:ctx.defs tp) Local 
+    let lift_arg (n,tp) =
+      insert ctx n (from_ast_type ~defs:ctx.defs tp) Local
     in
     let args' = List.map lift_arg args in
     let body' = from_ast_expr ctx body in
