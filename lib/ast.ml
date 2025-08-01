@@ -1,6 +1,4 @@
-(*
-   Define basic structure as a recursive tree type
-*)
+(* Define basic structure as a recursive tree type *)
 open Option
     
 open Name
@@ -31,7 +29,7 @@ and expr =
 
 type top_level =
   | TL_td of type_def
-  | TL_at of assignment
+  | TL_an of assignment
   | TL_ex of expr
 
 (* TODO module signatures.
@@ -65,7 +63,7 @@ let mod_types m =
 let mod_assigns m = 
   List.filter_map (fun tl ->
       match tl with
-      | TL_at at -> some at
+      | TL_an at -> some at
       | _ -> none) m.top
 ;;
 
@@ -80,53 +78,62 @@ let rec fetch_nearest_alias s ms =
      | None -> fetch_nearest_alias s rest)
 ;;
 
-let rec pp_type ?(mods = []) t =
-  match t with
-  | Int_t -> "Int"
-  | Fun_t (args, result) ->
-    Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
-    ^ pp_type result
-    ^ ")"
-  | Alias_t s ->
-    let b = fetch_nearest_alias s mods in
-    let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
-    (match b with
-     | None -> prefix ^ "nothing }"
-     | Some td -> prefix ^ pp_type ~mods td.rhs_t ^ "}")
-;;
+module PrettyPrint = struct
+  open Util.Pretty
+  let rec pp_type ?(mods = []) t =
+    match t with
+    | Int_t -> "Int"
+    | Fun_t (args, result) ->
+      "("
+      ^ Util.pp_arr pp_type args
+      ^ pp_type result
+      ^ ")"
+    | Alias_t s ->
+      let b = fetch_nearest_alias s mods in
+      let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
+      (match b with
+       | None -> prefix ^ "nothing }"
+       | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
+  ;;
 
-let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
-let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
+  let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
 
-let rec pp_assignment a = pp_binding a.lhs ^ " = " ^ pp_expr a.rhs
+  let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
 
-and pp_expr e =
-  match e with
-  | Lit i -> string_of_int i
-  | Var n -> pp_name n
-  | App (f, aps) ->
-    "( "
-    ^ List.fold_left (fun acc arg -> acc ^ pp_expr arg ^ " ") (pp_expr f ^ " ") aps
-    ^ ")"
-  | Fun (binds, body) ->
-    List.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ " binds
-    ^ ". "
-    ^ pp_expr body
-  | Let (assigns, body) ->
-    List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "let\n" assigns
-    ^ ". "
-    ^ pp_expr body
-;;
+  let rec pp_assignment a = pp_binding a.lhs ^ " = " ^ pp_expr a.rhs
+  and pp_expr e =
+    match e with
+    | Lit i -> string_of_int i
+    | Var n -> pp_name n
+    | App (f, aps) ->
+      "( "
+      ^ pp_expr f ^ " "
+      ^ pp_lst pp_expr aps
+      ^ ")"
+    | Fun (binds, body) ->
+      inc_indent ();
+      let ppb = pp_lst pp_binding binds in
+      let ppi = pp_expr body in
+      dec_indent ();
+      (indent_line "λ\n") ^ ppb ^ (indent_line ".\n") ^ ppi
+    | Let (assigns, body) ->
+      inc_indent ();
+      let ppb = pp_lst pp_assignment assigns in
+      let ppi = pp_expr body in
+      dec_indent ();
+      (indent_line "let\n") ^ ppb ^ (indent_line ".\n") ^ ppi
+  ;;
 
-let pp_top_level tl = match tl with
-  | TL_td td -> pp_type_def td
-  | TL_at at -> pp_assignment at
-  | TL_ex ex -> pp_expr ex
-;;
+  let pp_top_level tl = match tl with
+    | TL_td td -> pp_type_def td
+    | TL_an at -> pp_assignment at
+    | TL_ex ex -> pp_expr ex
+  ;;
 
-let pp_mod m =
-  let prefix = "{Module :\n" in
-  let types = List.fold_left (fun acc t ->  acc ^ pp_type_def t ^ "\n") "" @@ mod_types m in
-  let assigns = List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "" @@ mod_assigns m in
-  prefix ^ types ^ "And assignments:\n" ^ assigns ^ "}"
-;;
+  let pp_mod m =
+    let prefix = indent_line "{Module :\n" in
+    let types = pp_lst pp_type_def @@ mod_types m in
+    let assigns = pp_lst pp_assignment @@ mod_assigns m in
+    prefix ^ types ^ "And assignments:\n" ^ assigns ^ "}"
+  ;;
+end 

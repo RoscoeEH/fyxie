@@ -1,11 +1,5 @@
-(*
-   * The idea is that the AST should contain all the structural info,
- * but while building it from the ast, we do arity and type checking,
- * and associate variable references to slots in binding scopes.
-*)
 
 open Option 
-open Result
 open List
 open Array
 
@@ -14,27 +8,38 @@ open Name
 type type_t =
   | Int_t
   | Fun_t of type_t array * type_t
+  | Alias_t of name
 
-(* TODO consider merging v_ref and binding, so that every name+type
-   also has a slot idx *)
-type binding =
-  { b_name : name
-  ; b_tp : type_t
+type type_def =
+  { lhs_t : name
+  ; rhs_t : type_t
   }
 
-and v_ref =
+type domain =
+  | Static
+  | Local
+  | Closure
+
+type variable =
   { v_name : name
-  ; v_slot : int
+  ; v_tp : type_t
+  ; v_domain : domain
+  ; v_id : int
+  }
+
+type assignment =
+  { lhs : variable
+  ; rhs : expr
   }
 
 and func =
-  { f_args : binding Array.t
-  ; captures : (binding * int) Array.t
+  { f_args : variable Array.t
+  ; captures : variable Array.t
   ; f_body : expr
   }
 
 and let_block =
-  { binds : (binding * expr) Array.t
+  { binds : assignment Array.t
   ; l_body : expr
   }
 
@@ -48,7 +53,7 @@ and literal = { value : int }
 and content =
   | Fun of func
   | Let of let_block
-  | Var of v_ref
+  | Var of variable
   | App of application
   | Lit of literal
 
@@ -57,102 +62,112 @@ and expr =
   ; inner : content
   }
 
-let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
+type top_level =
+  | TL_td of type_def
+  | TL_an of assignment
+  | TL_ex of expr
 
-let rec pp_type t =
-  match t with
-  | Int_t -> "Int"
-  | Fun_t (args, result) ->
-    Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
-    ^ "-> " ^ pp_type result
+type mod_t =
+  { mod_name : name option
+  ; top : top_level Array.t
+  }
+
+let mod_types m =
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_td td -> some td
+      | _ -> none) @@ to_list m.top
+;;
+
+let mod_assigns m = 
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_an at -> some at
+      | _ -> none) @@ to_list m.top
+;;
+
+let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) @@ mod_types m
+
+let rec fetch_nearest_alias s ms =
+  match ms with
+  | [] -> None
+  | m::rest -> (match fetch_alias s m with
+    | Some v -> Some v
+    | None -> fetch_nearest_alias s rest)
+;;
+
+module PrettyPrint = struct
+  let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
+
+  let rec pp_type ?(mods=[]) t =
+    match t with
+    | Int_t -> "Int"
+    | Fun_t (args, result) ->
+      Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
+      ^ "-> " ^ pp_type result
+      ^ ")"
+    | Alias_t s ->
+      let b = fetch_nearest_alias s mods in
+      let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
+      (match b with
+       | None -> prefix ^ "nothing }"
+       | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
+  ;;
+
+  let pp_domain d = match d with
+    | Static -> "static"
+    | Local -> "local"
+    | Closure -> "closure"
+  ;;
+  
+  let pp_var v =
+    "{" 
+    ^ pp_name v.v_name 
+    ^ " : " ^ pp_type v.v_tp
+    ^ " in " ^ pp_domain v.v_domain
+    ^ " @ " ^ string_of_int v.v_id
+    ^ "}"
+  ;;
+
+  let rec pp_assignment a =
+    pp_var a.lhs ^ " = " ^ pp_expr a.rhs
+  and pp_func f =
+    Array.fold_left (fun acc b -> acc ^ pp_var b ^ " ") "λ " f.f_args
+    ^ Array.fold_left (fun acc b -> acc ^ pp_var b ^ " ") "[ " f.captures
+    ^ "] . "
+    ^ pp_expr f.f_body
+  and pp_let l =
+    Array.fold_left
+      (fun acc a -> acc ^ pp_assignment a ^ "\n")
+      "let\n"
+      l.binds
+    ^ ". "
+    ^ pp_expr l.l_body
+  and pp_app a =
+    Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("( " ^ pp_expr a.func ^ " ") a.a_args
     ^ ")"
-;;
+  and pp_expr e =
+    let s =
+      match e.inner with
+      | Fun f -> pp_func f
+      | Let l -> pp_let l
+      | Var v -> pp_var v
+      | App a -> pp_app a
+      | Lit l -> pp_lit l
+    in
+    "{" ^ s ^ " : " ^ pp_type e.tp ^ "}"
+  ;;
 
-let pp_binding b = pp_name b.b_name ^ " : " ^ pp_type b.b_tp
-let pp_vref v = "{" ^ pp_name v.v_name ^ " @ " ^ string_of_int v.v_slot ^ "}"
-
-let rec pp_func f =
-  Array.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ " f.f_args
-  ^ Array.fold_left (fun acc (b, _i) -> acc ^ pp_binding b ^ " ") "[ " f.captures
-  ^ "] . "
-  ^ pp_expr f.f_body
-
-and pp_let l =
-  Array.fold_left
-    (fun acc (b, v) -> acc ^ "  " ^ pp_binding b ^ " = " ^ pp_expr v ^ "\n")
-    "let\n"
-    l.binds
-  ^ ". "
-  ^ pp_expr l.l_body
-
-and pp_app a =
-  Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("( " ^ pp_expr a.func ^ " ") a.a_args
-  ^ ")"
-
-and pp_expr e =
-  let s =
-    match e.inner with
-    | Fun f -> pp_func f
-    | Let l -> pp_let l
-    | Var v -> pp_vref v
-    | App a -> pp_app a
-    | Lit l -> pp_lit l
-  in
-  "{" ^ s ^ " : " ^ pp_type e.tp ^ "}"
-;;
-
-(* simple lifts from ast to ast types *)
-let from_ast_name a = a
-
-let rec from_ast_type t =
-  match t with
-  | Ast.Int_t -> Int_t
-  | Ast.Fun_t (args, ret) -> Fun_t (Array.map from_ast_type args, from_ast_type ret)
-  | _ -> raise @@ Failure "TODO implemented from_ast_type for aliases"
-;;
-
-let from_ast_binding ((n, t) : Ast.binding) = { b_name = n; b_tp = from_ast_type t }
-
-let pp_scopes scopes =
-  print_endline "Scopes list";
-  let _ = 
-    List.map (fun b ->
-        let _ = Array.map (fun b -> print_endline @@ pp_binding b) b in
-        print_endline "") scopes
-  in ()
-;;
-
-let find_index pred (arr : 'a array) : int option =
-  let len = Array.length arr in
-  let rec loop i =
-    if i = len then None else if pred arr.(i) then Some i else loop (i + 1)
-  in
-  loop 0
-;;
-
-let matching_binding n (scope : binding array) =
-  match find_index (fun b -> n = b.b_name) scope with
-  | None -> None
-  | Some idx -> Some (scope.(idx), idx)
-;;
-
-(* fetch a binding from a scope, and return it along with some indexing info *)
-let lookup_name name (scopes : binding array list) =
-  (*
-   * print_endline @@ "lookup for " ^ name ^ " in: ";
-   * pp_scopes scopes;
-   *)
-  let helper acc s =
-    match acc with
-    | Ok v -> Ok v
-    | Error n ->
-      (match matching_binding name s with
-       | None -> Error (n + Array.length s)
-       | Some (b, i) -> Ok (b, n + i))
-  in
-  let r = List.fold_left helper (Error 0) scopes in
-  map_error (fun _ -> pp_name name ^ " not defined") r
-;;
+  let pp_scopes scopes =
+    print_endline "Scopes list";
+    let _ = 
+      List.map (fun b ->
+          let _ = Array.map (fun b -> print_endline @@ pp_var b) b in
+          print_endline "") scopes
+    in ()
+  ;;
+end
+open PrettyPrint 
 
 let collect_captures args body =
   let captures = ref [] in
@@ -163,8 +178,8 @@ let collect_captures args body =
       if List.mem name ignores
       then ()
       else captures := name :: !captures
-    | Ast.Let (assigns, inner) ->
-      let shadowed_names = List.map (let open Ast in fun a -> fst a.lhs) assigns in
+    | Ast.Let (binds, inner) ->
+      let shadowed_names = List.map (fun (an:Ast.assignment) -> fst an.lhs) binds in
       cc1 (List.append shadowed_names ignores) inner
     | Ast.App (func, args) ->
       cc1 ignores func;
@@ -174,109 +189,159 @@ let collect_captures args body =
       cc1 (List.append shadowed_names ignores) inner
   in
   cc1 args body;
-  let o = List.sort_uniq Name.compare !captures in
-  (*
-   * print_string "Captured names from: ";
-   * print_endline @@ Ast.pp_expr body;
-   * let _ = List.map (fun n -> print_endline @@ "  " ^ n) o in
-   * print_endline "";
-   *)
-  o
+  !captures
 ;;
 
+let rec from_ast_type ?(defs=[]) at =
+  match at with
+  | Ast.Int_t -> Int_t
+  | Ast.Fun_t (args, ret) -> 
+    let args' = Array.map (fun a -> from_ast_type ~defs a) args in
+    Fun_t (args', from_ast_type ~defs ret)
+  | Ast.Alias_t n -> 
+    match List.find_opt (fun td -> td.lhs_t = n) defs with
+    | Some td -> td.rhs_t
+    | None -> raise @@ Failure ("Type alias " ^ pp_name n ^ " not defined")
+;;
+     
+let from_ast_type_def ?(defs=[]) (td : Ast.type_def) =
+ {lhs_t=td.lhs_t; rhs_t=from_ast_type ~defs td.rhs_t}
+;;
 
-(* TODO this is still not great but it it is better.
- *
- * It should probably return a result rather than panic.
- *
- * All the threading of the free_list makes a monad tempting but I'm
- * not sure how exactly to set it up tbh.
-*)
-let rec from_ast (scopes : binding array list) (free_list : name list) (expr : Ast.expr) =
-  match expr with
-  | Ast.Lit v -> free_list, { tp = Int_t; inner = Lit { value = v } }
-  | Ast.Let (assigns, body) ->
-    let open Ast in
-    let a_assigns = of_list assigns in
-    let arms = Array.map (fun a -> a.rhs) a_assigns in
-    let binds' = Array.map (fun a -> from_ast_binding a.lhs) a_assigns in
-    (*
-     * print_endline "let with scopes:";
-     * pp_scopes (binds' :: scopes);
-     *)
-    let fl2, body' = from_ast (binds' :: scopes) free_list body in
-    let fl3, arms' = lift_arms scopes fl2 arms in
-    ( fl3
-    , { tp = body'.tp
-      ; inner = Let { l_body = body'; binds = Array.combine binds' arms' }
-      } )
-  | Ast.App (func, args) ->
-    (*
-     * print_endline "app with scope";
-     * pp_scopes scopes;
-     *)
-    let fl2, func' = from_ast scopes free_list func in
-    let fl3, args', r_t = check_app scopes fl2 args func'.tp in
-    let a_t = Fun_t (Array.map (fun a -> a.tp) args', r_t) in
-    fl3, { tp = a_t; inner = App { func = func'; a_args = args' } }
-  | Ast.Var name ->
-    let bind, slot_idx =
-      match lookup_name (from_ast_name name) scopes with
-      | Error s -> raise (Failure s)
-      | Ok v -> v
+type ctx =
+  { mutable defs            : type_def list
+  ; mutable statics         : variable list
+  ; mutable static_next_id  : int
+  ; mutable locals          : variable list
+  ; mutable local_next_id   : int
+  ; mutable closures        : variable list
+  ; mutable closure_next_id : int
+  }
+
+let save ctx =
+  (* TODO surely there is a better way for a deep copy? *)
+  { defs            = ctx.defs           
+  ; statics         = ctx.statics        
+  ; static_next_id  = ctx.static_next_id 
+  ; locals          = ctx.locals         
+  ; local_next_id   = ctx.local_next_id  
+  ; closures        = ctx.closures       
+  ; closure_next_id = ctx.closure_next_id
+  }
+;;
+
+let restore ~dst ~src =
+  (* TODO again this sucks *)
+  dst.defs            <- src.defs           ;
+  dst.statics         <- src.statics        ;
+  dst.static_next_id  <- src.static_next_id ;
+  dst.locals          <- src.locals         ;
+  dst.local_next_id   <- src.local_next_id  ;
+  dst.closures        <- src.closures       ;
+  dst.closure_next_id <- src.closure_next_id
+;;
+
+let next_id ctx domain = match domain with
+  | Static -> 
+    ctx.static_next_id <- ctx.static_next_id+1;
+    ctx.static_next_id-1
+  | Local -> 
+    ctx.local_next_id <- ctx.local_next_id+1;
+    ctx.local_next_id-1
+  | Closure -> 
+    ctx.closure_next_id <- ctx.closure_next_id+1;
+    ctx.closure_next_id-1
+;;
+
+let insert ctx name tp domain = 
+  let id = next_id ctx domain in
+  let v = {v_name=name; v_tp=tp; v_domain=domain; v_id=id} in
+  (match domain with
+  | Static -> ctx.statics <- v :: ctx.statics
+  | Local -> ctx.locals <- v :: ctx.locals
+  | Closure -> ctx.closures <- v :: ctx.closures);
+  v
+;;
+
+let lookup ctx name =
+  let pred n = name = n.v_name in
+  let scopes = [ctx.locals; ctx.closures; ctx.statics] in
+  let results = List.map (List.find_opt pred) scopes in
+  let r = List.fold_left (fun a b -> if is_some a then a else b) none results in
+  r
+;;
+
+let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) = 
+  let (n,tp) = an.lhs in
+  let expr = an.rhs in
+  let tp' = from_ast_type ~defs:ctx.defs tp in
+  let expr' = from_ast_expr ctx expr in
+  let var = insert ctx n tp' domain in 
+  if expr'.tp <> tp'
+  then raise @@ Failure 
+      ("Types don't match in assignment of\n"
+       ^ pp_expr expr' ^ "\nto\n" ^ pp_var var)
+  else {lhs=var; rhs=expr'}
+
+and from_ast_expr ctx (expr : Ast.expr) = match expr with
+  | Lit i -> {tp=Int_t; inner=Lit {value=i}}
+  | App (func, args) -> 
+    let func' = from_ast_expr ctx func in
+    let args' = List.map (from_ast_expr ctx) args in
+    let (fa_tp, ret_tp) = match func'.tp with
+      | Fun_t (i,o) -> (i, o)
+      | _ -> raise @@
+        Failure ("Non-func type in application: " ^ pp_type func'.tp)
     in
-    free_list, { tp = bind.b_tp; inner = Var { v_name = name; v_slot = slot_idx } }
-  | Ast.Fun (args, body) ->
-    let args' = Array.map from_ast_binding (Array.of_list args) in
+    let a_tps = Array.of_list @@ List.map (fun a -> a.tp) args' in
+    if fa_tp <> a_tps
+    then 
+      let expected = Array.fold_left 
+          (fun acc p -> acc ^ pp_type p ^ "\n") 
+          "Types don't match in application\n" fa_tp 
+      in 
+      let supplied = Array.fold_left 
+          (fun acc p -> acc ^ pp_type p ^ "\n") 
+          "Provided\n" a_tps
+      in 
+      raise @@ Failure (expected ^ supplied)
+    else 
+      {tp = ret_tp; inner= App {func=func'; a_args=Array.of_list args'}}
+  | Var n -> (match lookup ctx n with
+      | Some v -> {tp=v.v_tp; inner=Var v}
+      | None -> raise @@ Failure ("Name " ^ pp_name n ^ "not defined"))
+  | Let (binds, body) ->
+    let prior_ctx = save ctx in
+    let vars = List.map (from_ast_assign ~domain:Local ~ctx:ctx) binds in
+    (* assign already extends ctx for us *)
+    let body' = from_ast_expr ctx body in
+    let out = {tp=body'.tp; inner=Let {binds=Array.of_list vars; l_body=body'}} in
+    let _ = restore ~dst:ctx ~src:prior_ctx in
+    (* don't let binds escape into the next thing we call from_ast_expr on *)
+    out
+  | Fun (args, body) ->
+    let prior_ctx = save ctx in
     let cap_names = collect_captures (List.map fst args) body in
-    (*
-     * print_endline "in func before lookup";
-     *)
-    let cap_sources = Util.sequence @@ List.map (fun n -> lookup_name n scopes) cap_names in
-    match cap_sources with
-    | Error e ->
-      (*
-       * print_endline "failed in the cap lookups";
-       * let _ = List.map print_endline cap_names in
-       *)
-      raise @@ Failure e
-    | Ok cap_sources ->
-      let func_scopes = (Array.of_list @@ List.map fst cap_sources) :: args' :: [] in
-      let fl2, body' = from_ast func_scopes [] body in
-      let func' =
-        Fun { f_args = args'; f_body = body'; captures = Array.of_list cap_sources }
-      in
-      let func_t = Fun_t (Array.map (fun b -> b.b_tp) args', body'.tp) in
-      List.append free_list fl2, { tp = func_t; inner = func' }
+    let ensure_def n = match lookup ctx n with
+      | None -> raise @@ Failure ("Name " ^ pp_name n ^ " Not defined")
+      | Some v -> v
+    in
+    let cap_vars = List.map ensure_def cap_names in
+    ctx.closures <- cap_vars;
+    ctx.closure_next_id <- List.length cap_vars;
 
-and check_app scopes fl args f_t =
-  (* checks arity + types, returns (freelist, lifted arg array, output type) or error*)
-  let rec lift fl lst =
-    match lst with
-    | [] -> fl, []
-    | hd :: tl ->
-      let fl2, hd' = from_ast scopes fl hd in
-      let fl3, tl' = lift fl2 tl in
-      fl3, hd' :: tl'
-  in
-  let fl2, args' = (fun (fl, ag) -> fl, of_list ag) (lift fl args) in
-  match f_t with
-  | Fun_t (fa_t, r_t) ->
-    if length fa_t == length args'
-    then
-      let arg_types = Array.map (fun e -> e.tp) args' in
-      if fa_t = arg_types
-      then fl2, args', r_t
-      else
-        let expected_types = Array.fold_left (fun acc t -> acc ^ pp_type t ^ " ") "" arg_types in
-        let got_types = Array.fold_left (fun acc t -> acc ^ pp_type t ^ " ") "" fa_t in
-        let msg = Printf.sprintf "Argument type doesn't match in function application expected %sreceived %s"
-            expected_types got_types in
-        raise (Failure msg)
-    else raise (Failure "Wrong number of arguments in function application")
-  | _ -> raise (Failure "Application applied to non function type")
+    ctx.locals <- [];
+    ctx.local_next_id <- 0;
+    let lift_arg (n,tp) = 
+      insert ctx n (from_ast_type ~defs:ctx.defs tp) Local 
+    in
+    let args' = List.map lift_arg args in
+    let body' = from_ast_expr ctx body in
+    let a_tps = Array.of_list @@ List.map (fun v -> v.v_tp) args' in
+    let f_tp = Fun_t (a_tps, body'.tp) in
+    let _ = restore ~dst:ctx ~src:prior_ctx in
+    { tp=f_tp
+    ; inner=Fun { f_args=Array.of_list args'
+                ; captures=Array.of_list cap_vars
+                ; f_body=body'}}
 
-and lift_arms scopes fl arms =
-  let helper fl2 arm = from_ast scopes fl2 arm in
-  Array.fold_left_map helper fl arms
-;;
