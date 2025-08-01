@@ -4,6 +4,9 @@ build:
 run:
 	opam exec -- dune exec bin/main.exe
 
+debug:
+	opam exec -- ocamldebug _build/default/bin/main.bc
+
 clean:
 	opam exec -- dune clean
 
