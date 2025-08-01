@@ -115,3 +115,13 @@ let sequence (lst : ('a, 'e) result list) =
   let (init : ('a list, 'e) result) = Ok [] in
   List.fold_right cons_ok lst init
 ;;
+
+(* Pretty printing *)
+module Pretty = struct
+  let indent_lvl = ref 0
+  let indent_str () = String.make (!indent_lvl * 2) ' '
+  let inc_indent () = indent_lvl := !indent_lvl + 1
+  let dec_indent () = indent_lvl := !indent_lvl - 1
+  let print str = print_string (indent_str () ^ str)
+  let print_endline str = print_endline (indent_str () ^ str)
+end
