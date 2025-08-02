@@ -10,8 +10,9 @@ debug:
 clean:
 	opam exec -- dune clean
 
+.PHONY: test
 test:
-	opam exec -- dune runtest
+	opam exec -- dune exec bin/main.exe < test_input.txt
 
 fmt:
 	opam exec -- dune fmt

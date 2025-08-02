@@ -2,8 +2,6 @@
    Define basic structure as a recursive tree type
 *)
 
-(* open Util *)
-
 (* Make AST handle type checking, closures, and var linking *)
 
 (* TODO update this to something that looks more like a path *)

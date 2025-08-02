@@ -1,0 +1,3 @@
+? ( fst   : (Int Int Int) = \ x:Int y:Int . x ) .
+  ? ( const : (Int Int) = \ y:Int . (fst 0 y) ) .
+ ( const 69 )

@@ -4,7 +4,7 @@ let get_next_expr () =
   match e Parse.Parse.empty_context with
   | Ok (v, _) ->
     print_string "AST ";
-    Ast.pp_expr v;
+    print_string (Ast.pp_expr v);
     print_endline "";
     v
   | Error (msg, _ctx) -> raise @@ Failure ("Failed to parse expression: " ^ msg)
