@@ -97,14 +97,18 @@ let sequence (lst : ('a, 'e) result list) =
 ;;
 
 (* Pretty printing *)
-(* module Pretty = struct *)
-(*   let indent_lvl = ref 0 *)
-(*   let indent_str () = String.make (!indent_lvl * 2) ' ' *)
-(*   let inc_indent () = indent_lvl := !indent_lvl + 1 *)
-(*   let dec_indent () = indent_lvl := !indent_lvl - 1 *)
-(*   let buffer = Buffer.create 128 *)
-(*   let print str = Buffer.add_string buffer (indent_str () ^ str) *)
-(*   let print_endline str = Buffer.add_string buffer (indent_str () ^ str ^ "\n") *)
-(*   let contents () = Buffer.contents buffer *)
-(*   let clear () = Buffer.clear buffer *)
-(* end *)
+module Pretty : sig
+  val inc_indent : unit -> unit
+  val dec_indent : unit -> unit
+  val indent_line : string -> string
+  val pp_lst : ?sep:string -> ('a -> string) -> 'a list  -> string
+  val pp_arr : ?sep:string -> ('a -> string) -> 'a array -> string
+end = struct
+  let indent_lvl = ref 0
+  let indent_str () = String.make (!indent_lvl * 2) ' '
+  let inc_indent () = indent_lvl := !indent_lvl + 1
+  let dec_indent () = indent_lvl := !indent_lvl - 1
+  let indent_line str = indent_str () ^ str
+  let pp_lst ?(sep=" ") pp lst = List.fold_left  (fun acc x -> acc ^ indent_line (pp x) ^ sep) "" lst
+  let pp_arr ?(sep=" ") pp arr = Array.fold_left (fun acc x -> acc ^ indent_line (pp x) ^ sep) "" arr
+end
