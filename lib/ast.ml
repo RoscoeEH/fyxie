@@ -85,7 +85,7 @@ module PrettyPrint = struct
     | Int_t -> "Int"
     | Fun_t (args, result) ->
       "("
-      ^ Util.pp_arr pp_type args
+      ^ pp_arr pp_type args
       ^ pp_type result
       ^ ")"
     | Alias_t s ->
@@ -115,13 +115,13 @@ module PrettyPrint = struct
       let ppb = pp_lst pp_binding binds in
       let ppi = pp_expr body in
       dec_indent ();
-      (indent_line "λ\n") ^ ppb ^ (indent_line ".\n") ^ ppi
+      "λ" ^ ppb ^ ". " ^ ppi
     | Let (assigns, body) ->
       inc_indent ();
       let ppb = pp_lst pp_assignment assigns in
       let ppi = pp_expr body in
       dec_indent ();
-      (indent_line "let\n") ^ ppb ^ (indent_line ".\n") ^ ppi
+      "let (" ^ ppb ^ ")\n.\n" ^ ppi
   ;;
 
   let pp_top_level tl = match tl with

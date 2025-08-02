@@ -3,9 +3,8 @@ let get_next_expr () =
   let e = Parse.Parse.parse_expression in
   match e Parse.Parse.empty_context with
   | Ok (v, _) ->
-    let s = Ast.PrettyPrint.pp_expr v in
     print_string "AST ";
-    print_string (Ast.pp_expr v);
+    print_string (Ast.PrettyPrint.pp_expr v);
     print_endline "";
     v
   | Error (msg, _ctx) -> raise @@ Failure ("Failed to parse expression: " ^ msg)

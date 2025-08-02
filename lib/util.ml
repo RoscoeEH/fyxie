@@ -120,6 +120,6 @@ end = struct
   let inc_indent () = indent_lvl := !indent_lvl + 1
   let dec_indent () = indent_lvl := !indent_lvl - 1
   let indent_line str = indent_str () ^ str
-  let pp_lst ?(sep=" ") pp lst = List.fold_left  (fun acc x -> acc ^ indent_line (pp x) ^ sep) "" lst
-  let pp_arr ?(sep=" ") pp arr = Array.fold_left (fun acc x -> acc ^ indent_line (pp x) ^ sep) "" arr
+  let pp_lst ?(sep=" ") pp lst = List.fold_left  (fun acc x -> acc ^ pp x ^ sep) "" lst
+  let pp_arr ?(sep=" ") pp arr = Array.fold_left (fun acc x -> acc ^ pp x ^ sep) "" arr
 end

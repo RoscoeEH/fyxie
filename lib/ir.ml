@@ -99,14 +99,17 @@ let rec fetch_nearest_alias s ms =
 ;;
 
 module PrettyPrint = struct
+  open Util.Pretty
   let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
 
   let rec pp_type ?(mods=[]) t =
     match t with
     | Int_t -> "Int"
     | Fun_t (args, result) ->
-      Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
-      ^ "-> " ^ pp_type result
+      "("
+      ^ pp_arr pp_type args
+      ^ "-> " 
+      ^ pp_type result
       ^ ")"
     | Alias_t s ->
       let b = fetch_nearest_alias s mods in
@@ -127,24 +130,24 @@ module PrettyPrint = struct
     "{"
     ^ pp_name v.v_name
     ^ " : " ^ pp_type v.v_tp
-    ^ " in " ^ pp_domain v.v_domain
     ^ " @ " ^ string_of_int v.v_id
+    ^ " " ^ pp_domain v.v_domain
     ^ "}"
   ;;
 
   let rec pp_assignment a =
     pp_var a.lhs ^ " = " ^ pp_expr a.rhs
   and pp_func f =
-    Array.fold_left (fun acc b -> acc ^ pp_var b ^ " ") "λ " f.f_args
-    ^ Array.fold_left (fun acc b -> acc ^ pp_var b ^ " ") "[ " f.captures
+    "λ "
+    ^ pp_arr pp_var f.f_args
+    ^ "[ "
+    ^ pp_arr pp_var f.captures
     ^ "] . "
     ^ pp_expr f.f_body
   and pp_let l =
-    Array.fold_left
-      (fun acc a -> acc ^ pp_assignment a ^ "\n")
-      "let\n"
-      l.binds
-    ^ ". "
+    "let (\n"
+    ^ pp_arr ?sep:(Some "\n") pp_assignment l.binds
+    ^ ") .\n"
     ^ pp_expr l.l_body
   and pp_app a =
     Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("( " ^ pp_expr a.func ^ " ") a.a_args
@@ -227,6 +230,33 @@ let collect_captures args body =
   in
   cc1 args body;
   !captures
+;;
+
+let rec mark_as_captured (targets : (variable * int) list) body =
+  let remove lst t = remove_assoc t lst in
+  match body.inner with
+  | Lit _ -> body
+  | Fun _ -> body               (* wouldn't hurt but unnecessary *)
+  | App app ->
+    let f' = mark_as_captured targets app.func in
+    let as' = Array.map (mark_as_captured targets) app.a_args in
+    {tp=body.tp; inner=App ({func=f'; a_args=as'})}
+  | Let lb ->
+    let arms2 = Array.map (fun b -> mark_as_captured targets b.rhs) lb.binds in
+    let bind_vs = Array.map (fun b -> b.lhs) lb.binds in
+    let targets2 = Array.fold_left remove targets bind_vs in
+    let body2 = mark_as_captured targets2 lb.l_body in
+    { tp=body.tp
+    ; inner=Let { l_body=body2
+                ; binds=Array.map2 (fun b a -> {lhs=b; rhs=a}) bind_vs arms2}}
+  | Var v ->
+    if List.mem_assoc v targets
+    then { tp=body.tp
+         ; inner=Var { v_name=v.v_name
+                     ; v_tp=v.v_tp
+                     ; v_domain=Closure (* the point of this function *)
+                     ; v_id=v.v_id }}
+    else { tp=body.tp; inner=Var v}
 ;;
 
 let rec from_ast_type ?(defs=[]) at =
@@ -323,7 +353,7 @@ let insert ctx name tp domain =
 
 let lookup ctx name =
   let pred n = name = n.v_name in
-  let scopes = [ctx.locals; ctx.closures; ctx.statics] in
+  let scopes = [ctx.locals; ctx.args; ctx.closures; ctx.statics] in
   let results = List.map (List.find_opt pred) scopes in
   let r = List.fold_left (fun a b -> if is_some a then a else b) none results in
   r
@@ -383,6 +413,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
       | Some v -> v
     in
     let cap_vars = List.map ensure_def cap_names in
+    let cap_vars_i = List.mapi (fun i a -> (a,i)) cap_vars in
     ctx.closures <- cap_vars;
     ctx.closure_next_id <- List.length cap_vars;
 
@@ -392,7 +423,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
       insert ctx n (from_ast_type ~defs:ctx.defs tp) Arg
     in
     let args' = List.map lift_arg args in
-    let body' = from_ast_expr ctx body in
+    let body' = mark_as_captured cap_vars_i @@ from_ast_expr ctx body in
     let a_tps = Array.of_list @@ List.map (fun v -> v.v_tp) args' in
     let f_tp = Fun_t (a_tps, body'.tp) in
     let _ = restore ~dst:ctx ~src:prior_ctx in
