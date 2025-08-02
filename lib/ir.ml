@@ -307,6 +307,7 @@ let lookup ctx name =
 ;;
 
 let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
+  (* Mutates ctx to include the assignment in the given domain *)
   let (n,tp) = an.lhs in
   let expr = an.rhs in
   let tp' = from_ast_type ~defs:ctx.defs tp in
@@ -376,4 +377,22 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     ; inner=Fun { f_args=Array.of_list args'
                 ; captures=Array.of_list cap_vars
                 ; f_body=body'}}
+;;
 
+let from_ast_top_level ctx tl = match tl with
+  | Ast.TL_td td ->
+    let td' = from_ast_type_def ~defs:ctx.defs td in
+    ctx.defs <- td' :: ctx.defs;
+    TL_td td'
+  | Ast.TL_an an ->
+    let an' = from_ast_assign ~domain:Static ~ctx an in
+    TL_an an'
+  | Ast.TL_ex expr ->
+    let expr' = from_ast_expr ctx expr in
+    TL_ex expr'
+;;
+
+let from_ast_mod ctx (m : Ast.mod_t) =
+  let tl' = List.map (from_ast_top_level ctx) m.top in
+  {mod_name = m.mod_name; top=Array.of_list tl'}
+;;    
