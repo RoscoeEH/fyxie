@@ -97,14 +97,14 @@ let sequence (lst : ('a, 'e) result list) =
 ;;
 
 (* Pretty printing *)
-module Pretty = struct
-  let indent_lvl = ref 0
-  let indent_str () = String.make (!indent_lvl * 2) ' '
-  let inc_indent () = indent_lvl := !indent_lvl + 1
-  let dec_indent () = indent_lvl := !indent_lvl - 1
-  let buffer = Buffer.create 128
-  let print str = Buffer.add_string buffer (indent_str () ^ str)
-  let print_endline str = Buffer.add_string buffer (indent_str () ^ str ^ "\n")
-  let contents () = Buffer.contents buffer
-  let clear () = Buffer.clear buffer
-end
+(* module Pretty = struct *)
+(*   let indent_lvl = ref 0 *)
+(*   let indent_str () = String.make (!indent_lvl * 2) ' ' *)
+(*   let inc_indent () = indent_lvl := !indent_lvl + 1 *)
+(*   let dec_indent () = indent_lvl := !indent_lvl - 1 *)
+(*   let buffer = Buffer.create 128 *)
+(*   let print str = Buffer.add_string buffer (indent_str () ^ str) *)
+(*   let print_endline str = Buffer.add_string buffer (indent_str () ^ str ^ "\n") *)
+(*   let contents () = Buffer.contents buffer *)
+(*   let clear () = Buffer.clear buffer *)
+(* end *)

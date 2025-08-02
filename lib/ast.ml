@@ -2,7 +2,7 @@
    Define basic structure as a recursive tree type
 *)
 
-open Util
+(* open Util *)
 
 (* Make AST handle type checking, closures, and var linking *)
 
@@ -67,89 +67,46 @@ let rec fetch_nearest_alias s ms =
 
 let rec pp_type ?(mods = []) t =
   match t with
-  | Int_t -> print_endline "Int"
+  | Int_t -> "Int"
   | Fun_t (args, result) ->
-    print_endline "(";
-    Pretty.inc_indent ();
-    Array.iter
-      (fun arg ->
-         pp_type ~mods arg;
-         print_endline "->")
-      args;
-    pp_type ~mods result;
-    Pretty.dec_indent ();
-    print_endline ")"
+    Array.fold_left (fun acc arg -> acc ^ pp_type arg ^ " ") "(" args
+    ^ pp_type result
+    ^ ")"
   | Alias_t s ->
-    let prefix = "{ Alias : " ^ s ^ " bound to" in
-    print_endline prefix;
-    (match fetch_nearest_alias s mods with
-     | None -> print_endline "nothing"
-     | Some td ->
-       Pretty.inc_indent ();
-       pp_type ~mods td.rhs_t;
-       Pretty.dec_indent ();
-       print_endline "}")
+    let b = fetch_nearest_alias s mods in
+    let prefix = "{ Alias : " ^ s ^ " bound to " in
+    (match b with
+     | None -> prefix ^ "nothing }"
+     | Some td -> prefix ^ pp_type ~mods td.rhs_t ^ "}")
 ;;
 
-let pp_name s = Pretty.print_endline s
+let pp_name s = s
+let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
+let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
 
-let pp_type_def td =
-  Pretty.print_endline (td.lhs_t ^ " :=");
-  Pretty.inc_indent ();
-  pp_type td.rhs_t;
-  Pretty.dec_indent ()
-;;
-
-let pp_binding (n, t) =
-  Pretty.print (n ^ " : ");
-  pp_type t
-;;
-
-let rec pp_assignment a =
-  pp_binding a.lhs;
-  Pretty.print " = ";
-  pp_expr a.rhs;
-  Pretty.print_endline ""
+let rec pp_assignment a = pp_binding a.lhs ^ " = " ^ pp_expr a.rhs
 
 and pp_expr e =
   match e with
-  | Lit i -> Pretty.print_endline (string_of_int i)
-  | Var n -> Pretty.print_endline n
+  | Lit i -> string_of_int i
+  | Var n -> pp_name n
   | App (f, aps) ->
-    Pretty.print_endline "(";
-    Pretty.inc_indent ();
-    pp_expr f;
-    List.iter pp_expr aps;
-    Pretty.dec_indent ();
-    Pretty.print_endline ")"
+    "( "
+    ^ List.fold_left (fun acc arg -> acc ^ pp_expr arg ^ " ") (pp_expr f ^ " ") aps
+    ^ ")"
   | Fun (binds, body) ->
-    Pretty.print "λ ";
-    List.iter
-      (fun b ->
-         pp_binding b;
-         Pretty.print " ")
-      binds;
-    Pretty.print_endline ".";
-    Pretty.inc_indent ();
-    pp_expr body;
-    Pretty.dec_indent ()
+    List.fold_left (fun acc b -> acc ^ pp_binding b ^ " ") "λ " binds
+    ^ ". "
+    ^ pp_expr body
   | Let (assigns, body) ->
-    Pretty.print_endline "let";
-    Pretty.inc_indent ();
-    List.iter pp_assignment assigns;
-    Pretty.dec_indent ();
-    Pretty.print_endline "in";
-    pp_expr body
+    List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "let\n" assigns
+    ^ ". "
+    ^ pp_expr body
 ;;
 
 let pp_mod m =
-  Pretty.print_endline "{Module with types:";
-  Pretty.inc_indent ();
-  List.iter pp_type_def m.types;
-  Pretty.dec_indent ();
-  Pretty.print_endline "And assignments:";
-  Pretty.inc_indent ();
-  List.iter pp_assignment m.assigns;
-  Pretty.dec_indent ();
-  Pretty.print_endline "}"
+  let prefix = "{Module with types:\n" in
+  let types = List.fold_left (fun acc t -> acc ^ pp_type_def t ^ "\n") "" m.types in
+  let assigns = List.fold_left (fun acc a -> acc ^ pp_assignment a ^ "\n") "" m.assigns in
+  prefix ^ types ^ "And assignments:\n" ^ assigns ^ "}"
 ;;
