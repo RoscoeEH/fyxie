@@ -20,6 +20,7 @@ type domain =
   | Static
   | Local
   | Closure
+  | Arg
 
 type variable =
   { v_name : name
@@ -119,6 +120,7 @@ module PrettyPrint = struct
     | Static -> "static"
     | Local -> "local"
     | Closure -> "closure"
+    | Arg -> "arg"
   ;;
 
   let pp_var v =
@@ -249,9 +251,22 @@ type ctx =
   ; mutable static_next_id  : int
   ; mutable locals          : variable list
   ; mutable local_next_id   : int
+  ; mutable args            : variable list
+  ; mutable arg_next_id     : int
   ; mutable closures        : variable list
   ; mutable closure_next_id : int
   }
+
+let empty_ctx () = { defs            = []
+                   ; statics         = []
+                   ; static_next_id  = 0
+                   ; locals          = []
+                   ; local_next_id   = 0 
+                   ; args            = []
+                   ; arg_next_id     = 0 
+                   ; closures        = []
+                   ; closure_next_id = 0 
+                   }
 
 let save ctx =
   (* TODO surely there is a better way for a deep copy? *)
@@ -260,6 +275,8 @@ let save ctx =
   ; static_next_id  = ctx.static_next_id
   ; locals          = ctx.locals
   ; local_next_id   = ctx.local_next_id
+  ; args            = ctx.args
+  ; arg_next_id     = ctx.arg_next_id
   ; closures        = ctx.closures
   ; closure_next_id = ctx.closure_next_id
   }
@@ -272,11 +289,16 @@ let restore ~dst ~src =
   dst.static_next_id  <- src.static_next_id ;
   dst.locals          <- src.locals         ;
   dst.local_next_id   <- src.local_next_id  ;
+  dst.args            <- src.args           ;
+  dst.arg_next_id     <- src.arg_next_id    ;
   dst.closures        <- src.closures       ;
   dst.closure_next_id <- src.closure_next_id
 ;;
 
 let next_id ctx domain = match domain with
+  | Arg ->
+    ctx.arg_next_id <- ctx.arg_next_id+1;
+    ctx.arg_next_id-1
   | Static ->
     ctx.static_next_id <- ctx.static_next_id+1;
     ctx.static_next_id-1
@@ -294,6 +316,7 @@ let insert ctx name tp domain =
   (match domain with
   | Static -> ctx.statics <- v :: ctx.statics
   | Local -> ctx.locals <- v :: ctx.locals
+  | Arg -> ctx.args <- v :: ctx.args
   | Closure -> ctx.closures <- v :: ctx.closures);
   v
 ;;
@@ -366,7 +389,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     ctx.locals <- [];
     ctx.local_next_id <- 0;
     let lift_arg (n,tp) =
-      insert ctx n (from_ast_type ~defs:ctx.defs tp) Local
+      insert ctx n (from_ast_type ~defs:ctx.defs tp) Arg
     in
     let args' = List.map lift_arg args in
     let body' = from_ast_expr ctx body in

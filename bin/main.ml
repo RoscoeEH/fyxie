@@ -3,6 +3,7 @@ let get_next_expr () =
   let e = Parse.Parse.parse_expression in
   match e Parse.Parse.empty_context with
   | Ok (v, _) ->
+    let s = Ast.PrettyPrint.pp_expr v in
     print_string "AST ";
     print_string (Ast.pp_expr v);
     print_endline "";
@@ -11,9 +12,10 @@ let get_next_expr () =
 ;;
 
 let process ast_e =
-  let _, ir_e = Ir.from_ast [] [] ast_e in
+  let ctx = Ir.empty_ctx () in
+  let ir_e = Ir.from_ast_expr ctx ast_e in
   print_string "IR ";
-  print_endline (Ir.pp_expr ir_e);
+  print_endline (Ir.PrettyPrint.pp_expr ir_e);
   print_endline "";
   let open Compile.Compiler in
   let c_action = compile ir_e in

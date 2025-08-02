@@ -23,7 +23,8 @@ module type CompTracker = sig
   val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
   val seq : unit t -> 'b t -> 'b t
   val ( >> ) : unit t -> 'b t -> 'b t
-  val out_of_line : 'b t -> ('b * int) t
+  val enclosing_func : Ir.func option t
+  val out_of_line : ?func:Ir.func -> 'b t -> ('b * int) t
   val run_empty : 'a t -> op Dynarray.t
 end
 
@@ -32,12 +33,13 @@ module Tracker : CompTracker with type op := BC.op = struct
     { code_offset : int
     ; stack_offset : int
     ; target : BC.op Dynarray.t
+    ; in_func : func option
     }
 
   type 'a t = { run : ctx -> 'a * ctx }
 
   let run_empty action =
-    let empty_ctx = { code_offset = 0; stack_offset = 0; target = Dynarray.create () } in
+    let empty_ctx = { code_offset = 0; stack_offset = 0; target = Dynarray.create () ; in_func=None} in
     (snd (action.run empty_ctx)).target
   ;;
 
@@ -82,6 +84,7 @@ module Tracker : CompTracker with type op := BC.op = struct
         { code_offset = ctx.code_offset + 1
         ; stack_offset = ctx.stack_offset + s_offset
         ; target = ctx.target
+        ; in_func = ctx.in_func
         }
       in
       (), ctx2
@@ -97,19 +100,25 @@ module Tracker : CompTracker with type op := BC.op = struct
   let adjust_stack_offset i =
     let run = fun ctx -> (), { code_offset=ctx.code_offset
                              ; stack_offset=ctx.stack_offset + i
-                             ; target = ctx.target} in
+                             ; target = ctx.target
+                             ; in_func = ctx.in_func} in
     { run }
   ;;
 
+  let enclosing_func =
+    let run = fun ctx -> ctx.in_func, ctx in
+    { run }
+  ;;
+  
   (* implicitly assumes there will be an emitted instruction after
    * the out of line block that will be jumped to by the current
    * computation line. *)
-  let out_of_line m =
+  let out_of_line ?func m =
     let run =
       fun ctx ->
       let inner_target = Dynarray.create () in
       let inner_ctx =
-        { code_offset = ctx.code_offset + 1; stack_offset = 0; target = inner_target }
+        { code_offset = ctx.code_offset + 1; stack_offset = 0; target = inner_target ; in_func=func}
       in
       let v, inner_ctx2 = m.run inner_ctx in
       let inner_ptr = length ctx.target + ctx.code_offset in
@@ -141,7 +150,7 @@ end = struct
    *
    * function application does the following:
    * reserves 2 slots
-   * evaluates the args in reverse order
+   * evaluates the args in order
    * populates the stack with the captured values from the closure
    * calls the function
    *
@@ -176,27 +185,64 @@ end = struct
     helper f 0 acc
   ;;
 
-  let fold_right_mi (f : int -> 'b -> 'a -> 'b t) (acc : 'b t) (arr : 'a Array.t) =
-    let rec helper f i acc =
-      if i < 0
-      then acc
-      else (
-        let acc2 = acc >>= fun x -> f i x arr.(i) in
-        helper f (i - 1) acc2)
-    in
-    helper f (Array.length arr - 1) acc
-  ;;
+  (*
+   * let fold_right_mi (f : int -> 'b -> 'a -> 'b t) (acc : 'b t) (arr : 'a Array.t) =
+   *   let rec helper f i acc =
+   *     if i < 0
+   *     then acc
+   *     else (
+   *       let acc2 = acc >>= fun x -> f i x arr.(i) in
+   *       helper f (i - 1) acc2)
+   *   in
+   *   helper f (Array.length arr - 1) acc
+   * ;;
+   *)
 
+  (* TODO doing this with v_id is really fragile, since we aren't
+     super clear w/ the assuptions that that be ordered in any
+     way. Once we have a Mid/Low IR, we should have explicit ordering
+     there. Or just actually annotate / enforce some ordering on the
+     IDs. This one is the natural one (Sort of top to bottom, left to
+     right) *)
+  let var_index ?in_func v =
+    (* basic idea is that the stack offset is the distance from TOS to
+       the top of the closest function call, and that the id of a var 
+       (with some offset per domain) is basically the distance from 
+       the top of the function frame to the variable's slot. There is
+       also offsets for the return value and address, but those are handled
+       elsewhere. *)
+    match v.v_domain with
+    | Static -> raise @@ Failure "TODO static refs"
+    | Arg ->
+      (* args are at the top of the function frame *)
+      let* off = stack_offset in
+      return @@ off - v.v_id
+    | Closure ->
+      (* captures are below args *)
+      let* off = stack_offset in
+      let arg_size_opt = Option.map (fun a -> Array.length a.f_args) in_func in
+      let arg_size = Option.value ~default:0 arg_size_opt in
+      return @@ off - arg_size - v.v_id
+    | Local ->
+      (* locals are below both args and captures *)
+      let* off = stack_offset in
+      let arg_size_opt = Option.map (fun a -> Array.length a.f_args) in_func in
+      let arg_size = Option.value ~default:0 arg_size_opt in
+      let capture_size_opt = Option.map (fun a -> Array.length a.captures) in_func in
+      let capture_size = Option.value ~default:0 capture_size_opt in
+      return @@ off - arg_size - capture_size - v.v_id
+  ;;
+  
   let rec compile expr =
     match expr.inner with
     | Lit l -> emit (push_lit l.value)
     | Var v ->
-      let* rt_off = stack_offset in
-      emit (fetch_stack (v.v_slot + rt_off))
+      let* off = var_index v in
+      emit (fetch_stack off)
     | Let l ->
       let* rt_off_prior = stack_offset in
-      let arm_helper _i _acc (_bind, arm) = compile arm in
-      fold_right_mi arm_helper (return ()) l.binds >>
+      let arm_helper _i an _acc = compile an.rhs in
+      fold_left_mi arm_helper (return ()) l.binds >>
       compile l.l_body >>
       let* rt_off_after = stack_offset in
       let diff = rt_off_after - rt_off_prior in
@@ -211,12 +257,13 @@ end = struct
       emit (set_x_y 0) >>
       (* wrote the closure size to heap *)
       let* ptr_off = stack_offset in
-      let populate_captures i (_, origin_slot) _acc =
+      let populate_captures i v _acc =
         let* off = stack_offset in
         emit (fetch_stack (off - ptr_off)) >>
         (* copied closure ptr to top *)
-        let* off = stack_offset in
-        emit (fetch_stack (off + origin_slot)) >>
+        let* enc_f = enclosing_func in
+        let* v_off = var_index ?in_func:enc_f v in
+        emit (fetch_stack v_off) >>
         (* copied closure val to top *)
         emit (set_x_y (i + 1)) >>
         (* wrote captured val to heap closure *)
@@ -236,31 +283,25 @@ end = struct
         emit (drop (n_caps + n_args)) >>
         emit return_x
       in
-      let* _, code_ptr = out_of_line func_body_with_boilerplate in
-      emit (fetch_stack 0)
-      >>
+      let* _, code_ptr = out_of_line ?func:(Some f) func_body_with_boilerplate in
+      emit (fetch_stack 0) >>
       (* dup'd closure ptr *)
-      emit (push_lit code_ptr)
-      >>
+      emit (push_lit code_ptr) >>
       (* pushed func body code ptr to stack *)
       emit (set_x_y n_caps)
     (* wrote code ptr to closure *)
     | App a ->
       let arg_helper _i arg _acc = compile arg in
-      emit (reserve_stack 2)
-      >> fold_left_mi arg_helper (return ()) a.a_args
-      >>
-      (* wrote args to stack, with first arg at TOS *)
-      compile a.func
-      >>
+      emit (reserve_stack 2) >>
+      fold_left_mi arg_helper (return ()) a.a_args >>
+      (* wrote args to stack, with last arg at TOS *)
+      compile a.func >>
       (* wrote closure ptr to stack *)
-      emit (fetch_stack 0)
-      >> emit (fetch_x 0)
-      >>
+      emit (fetch_stack 0) >>
+      emit (fetch_x 0) >>
       (* fetched closure size to TOS *)
-      emit (fetch_region_x_y 1)
-      >>
-      (* copied rest of closure to stack *)
+      emit (fetch_region_x_y 1) >>
+      (* copied rest of closure to stack, consuming c. ptr *)
       emit call_x
   ;;
 end
