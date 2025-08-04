@@ -3,7 +3,6 @@
 open In_channel
 open Option
 open Result
-
 open Ast
 open Name
 
@@ -21,9 +20,10 @@ module Lex : sig
     | Lambda
     | Question
     | Equal
-    (* TODO expand lexing logic for literal symbols more than 1 char.
+    | Def
+  (* TODO expand lexing logic for literal symbols more than 1 char.
      * We will want that basically immediately for things like ":=" etc.
-     *)
+  *)
 
   val channel : In_channel.t ref
   val get_token : unit -> token option
@@ -41,6 +41,7 @@ end = struct
     | Lambda
     | Question
     | Equal
+    | Def
 
   let pp_token t =
     match t with
@@ -55,6 +56,7 @@ end = struct
     | Lambda -> "λ"
     | Question -> "?"
     | Equal -> "="
+    | Def -> ":="
   ;;
 
   let peeked = ref none
@@ -125,7 +127,13 @@ end = struct
     | Some ')' -> some CParen
     | Some '{' -> some OBrace
     | Some '}' -> some CBrace
-    | Some ':' -> some Colon
+    | Some ':' ->
+      (match getc () with
+       | Some '=' -> some Def
+       | Some c ->
+         push_back c;
+         some Colon
+       | None -> some Colon)
     | Some '.' -> some Dot
     | Some '\\' -> some Lambda
     | Some '?' -> some Question
@@ -170,7 +178,7 @@ module Parse = struct
 
   type 'a t = ctx -> ('a * ctx, string * ctx) result
 
-  let fail msg ctx = error (msg,ctx)
+  let fail msg ctx = error (msg, ctx)
 
   let next ctx =
     match ctx.peeked with
@@ -199,16 +207,18 @@ module Parse = struct
 
   let ( <|> ) a b ctx =
     (* idea is to thread peeked through both, but have consumed be reset for the second alterative *)
-    let ctx' = {consumed=[]; peeked=ctx.peeked} in
+    let ctx' = { consumed = []; peeked = ctx.peeked } in
     match a ctx' with
     | Ok (x, ctx2) ->
-      let ctx2' = {consumed=ctx2.consumed @ ctx.consumed; peeked=ctx2.peeked} in
+      let ctx2' = { consumed = ctx2.consumed @ ctx.consumed; peeked = ctx2.peeked } in
       Ok (x, ctx2')
     | Error (msg1, ctx2) ->
       let ctx3 =
         { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
       in
-      b ctx3 |> Result.map_error @@ fun (msg2, c) -> "Alternative failed:\n  " ^ msg1 ^ "\nand\n  " ^ msg2 , c
+      b ctx3
+      |> Result.map_error
+         @@ fun (msg2, c) -> "Alternative failed:\n  " ^ msg1 ^ "\nand\n  " ^ msg2, c
   ;;
 
   let map f a = a >>= fun v -> return @@ f v
@@ -275,8 +285,9 @@ module Parse = struct
     match inner with
     | _x :: _xs -> return inner
     | [] -> fail "Zero repetitions but one was required."
-    (* TODO more info, but how? *)
   ;;
+
+  (* TODO more info, but how? *)
 
   let in_parens p =
     let* _ = literal OParen in
@@ -284,7 +295,7 @@ module Parse = struct
     let* _ = literal CParen in
     return v
   ;;
-  
+
   let in_braces p =
     let* _ = literal OBrace in
     let* v = p in
@@ -297,54 +308,65 @@ module Parse = struct
     match name_of_string s with
     | Error e -> fail e
     | Ok v -> return v
+  ;;
 
-  let rec parse_type ctx = 
+  let rec parse_type ctx =
     let base = literal (Symbol "Int") >> return Int_t in
-    let func = in_parens 
+    let func =
+      in_parens
         (let* types = many parse_type >>| List.rev in
          match types with
          | final :: (_penult :: _rest as args) ->
            return @@ Fun_t (Array.of_list @@ List.rev args, final)
          | _ -> fail "Function type with only one element")
     in
-    let alias = parse_name >>| (fun s -> Alias_t s) in
+    let alias = parse_name >>| fun s -> Alias_t s in
     ctx |> (base <|> func <|> alias)
   ;;
 
   let parse_binding =
     let* l = parse_name in
-    literal Colon >>
+    literal Colon
+    >>
     let* tp = parse_type in
     return (l, tp)
   ;;
 
   let rec parse_assignment ctx =
-    ctx |> 
-    (let* bind = parse_binding in
-     literal Equal >>
-     let* expr = parse_expression in
-     return {lhs=bind; rhs=expr})
+    ctx
+    |>
+    let* bind = parse_binding in
+    literal Equal
+    >>
+    let* expr = parse_expression in
+    return { lhs = bind; rhs = expr }
+
   and parse_expression ctx =
-      let num = number >>| fun i -> Lit i in
-      let name = parse_name >>| fun n -> Var n in
-      let app =
-        in_parens
-          (let* inner = many1 parse_expression in
-           return (App (List.hd inner, List.tl inner)))
-      in
-      let lam =
-        literal Lambda >>
-        let* binds = many1 parse_binding in
-        literal Dot >>
-        let* body = parse_expression in
-        return @@ Fun (binds, body)
-      in
-      let l_block =
-        literal Question >>
-        let* assigns = in_parens (many1 parse_assignment) in
-        literal Dot >>
-        let* body = parse_expression in
-        return @@ Let (assigns, body)
-      in
-      ctx |> (num <|> name <|> app <|> lam <|> l_block)
+    let num = number >>| fun i -> Lit i in
+    let name = parse_name >>| fun n -> Var n in
+    let app =
+      in_parens
+        (let* inner = many1 parse_expression in
+         return (App (List.hd inner, List.tl inner)))
+    in
+    let lam =
+      literal Lambda
+      >>
+      let* binds = many1 parse_binding in
+      literal Dot
+      >>
+      let* body = parse_expression in
+      return @@ Fun (binds, body)
+    in
+    let l_block =
+      literal Question
+      >>
+      let* assigns = in_parens (many1 parse_assignment) in
+      literal Dot
+      >>
+      let* body = parse_expression in
+      return @@ Let (assigns, body)
+    in
+    ctx |> (num <|> name <|> app <|> lam <|> l_block)
+  ;;
 end
