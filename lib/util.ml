@@ -26,13 +26,7 @@ end
 
 (* monad sig for result *)
 module RM = struct
-  include Result
-
-  let bind a f =
-    match a with
-    | Error e -> Error e
-    | Ok v -> f v
-  ;;
+  include Result 
 
   let ( >>= ) = bind
   let return a = Ok a
@@ -51,13 +45,28 @@ module RM = struct
     | Ok _ -> b
   ;;
 
+  let ( <*> ) a b =
+    match a with
+    | Error e -> Error e
+    | Ok a -> begin match b with
+      | Error e -> Error e
+      | Ok b -> a b
+      end
+  ;;
+
+  let ( <$> ) f b =
+    b >>= fun x -> return @@ f x
+  ;;
+
   let ( let* ) a f = bind a f
 
-  let map_err f a =
-    match a with
-    | Ok v -> Ok v
-    | Error e -> Error (f e)
+  let liftM2 f a b =
+    let* x = a in
+    let* y = b in
+    return @@ f x y
   ;;
+  
+  let map_err = map_error
 end
 
 (* Collects Ok values, stops on an Error *)
