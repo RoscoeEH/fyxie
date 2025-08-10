@@ -21,8 +21,6 @@ module type CompTracker = sig
   val adjust_stack_offset : int -> unit t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
   val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
-  val seq : unit t -> 'b t -> 'b t
-  val ( >> ) : unit t -> 'b t -> 'b t
   val enclosing_func : Ir.func option t
   val out_of_line : ?func:Ir.func -> 'b t -> ('b * int) t
   val run_empty : 'a t -> op Dynarray.t
@@ -33,104 +31,95 @@ module Tracker : CompTracker with type op := BC.op = struct
     { code_offset : int
     ; stack_offset : int
     ; target : BC.op Dynarray.t
+    ; statics : BC.slot Dynarray.t
+    ; static_map : (int * (int * int)) list
     ; in_func : func option
     }
 
-  type 'a t = { run : ctx -> 'a * ctx }
+  type 'a t = ctx -> 'a * ctx
 
   let run_empty action =
-    let empty_ctx = { code_offset = 0; stack_offset = 0; target = Dynarray.create () ; in_func=None} in
-    (snd (action.run empty_ctx)).target
-  ;;
-
-  let return a =
-    let run = fun ctx -> a, ctx in
-    { run }
-  ;;
-
-  let bind a f =
-    let run =
-      fun ctx ->
-      let v, ctx2 = a.run ctx in
-      (f v).run ctx2
+    let empty_ctx =
+      { code_offset = 0
+      ; stack_offset = 0
+      ; target = Dynarray.create ()
+      ; statics = Dynarray.create ()
+      ; static_map = []
+      ; in_func=None
+      }
     in
-    { run }
+    (snd (action  empty_ctx)).target
+  ;;
+
+  let return a ctx = a, ctx 
+
+  let bind a f ctx = 
+    let v, ctx2 = a ctx in
+    f v ctx2
   ;;
 
   let ( >>= ) = bind
   let ( let* ) = bind
 
-  let seq a b =
-    let* _ = a in
-    b
+  let emit op = fun ctx ->
+    add_last ctx.target op;
+    let s_offset = Option.value (BC.stack_effect op) ~default:0 in
+    (* TODO the offset can fail for fetch_region, but this is unavoidable.
+       * This is only useful/required for fetching closures on application
+       * and the size can't be known at compile time, so either a fetch of
+       * unknown size, or a loop with unknown iterations needs to happen.
+       *
+       * Either way, the count of unknown. I am choosing to somewhat break
+       * the abstraction here rather than forgo it entirely, since I
+       * think it is useful otherwise and this has limited scope. *)
+    let ctx2 =
+      { code_offset = ctx.code_offset + 1
+      ; stack_offset = ctx.stack_offset + s_offset
+      ; target = ctx.target
+      ; statics = ctx.statics
+      ; static_map = ctx.static_map
+      ; in_func = ctx.in_func
+      }
+    in
+    (), ctx2
   ;;
 
-  let ( >> ) = seq
+  let stack_offset ctx = ctx.stack_offset, ctx 
 
-  let emit op =
-    let run =
-      fun ctx ->
-      add_last ctx.target op;
-      let s_offset = Option.value (BC.stack_effect op) ~default:0 in
-      (* TODO the offset can fail for fetch_region, but this is unavoidable.
-         * This is only useful/required for fetching closures on application
-         * and the size can't be known at compile time, so either a fetch of
-         * unknown size, or a loop with unknown iterations needs to happen.
-         *
-         * Either way, the count of unknown. I am choosing to somewhat break
-         * the abstraction here rather than forgo it entirely, since I
-         * think it is useful otherwise and this has limited scope. *)
-      let ctx2 =
-        { code_offset = ctx.code_offset + 1
-        ; stack_offset = ctx.stack_offset + s_offset
+  let adjust_stack_offset i ctx =
+    (), { code_offset=ctx.code_offset
+        ; stack_offset=ctx.stack_offset + i
         ; target = ctx.target
+        ; statics = ctx.statics
+        ; static_map = ctx.static_map
         ; in_func = ctx.in_func
         }
-      in
-      (), ctx2
-    in
-    { run }
   ;;
 
-  let stack_offset =
-    let run = fun ctx -> ctx.stack_offset, ctx in
-    { run }
-  ;;
-
-  let adjust_stack_offset i =
-    let run = fun ctx -> (), { code_offset=ctx.code_offset
-                             ; stack_offset=ctx.stack_offset + i
-                             ; target = ctx.target
-                             ; in_func = ctx.in_func} in
-    { run }
-  ;;
-
-  let enclosing_func =
-    let run = fun ctx -> ctx.in_func, ctx in
-    { run }
-  ;;
+  let enclosing_func ctx = ctx.in_func, ctx 
   
   (* implicitly assumes there will be an emitted instruction after
    * the out of line block that will be jumped to by the current
    * computation line. *)
-  let out_of_line ?func m =
-    let run =
-      fun ctx ->
-      let inner_target = Dynarray.create () in
-      let inner_ctx =
-        { code_offset = ctx.code_offset + 1; stack_offset = 0; target = inner_target ; in_func=func}
-      in
-      let v, inner_ctx2 = m.run inner_ctx in
-      let inner_ptr = length ctx.target + ctx.code_offset in
-      let jump_offset = length inner_ctx2.target in
-      (emit (BC.jump jump_offset)
-       >>= fun () ->
-       append ctx.target inner_target;
-       return (v, inner_ptr))
-        .run
-        ctx
+  let out_of_line ?func m = fun ctx ->
+    let inner_target = Dynarray.create () in
+    let inner_ctx =
+      { code_offset = ctx.code_offset + 1
+      ; stack_offset = 0
+      ; target = inner_target
+      ; statics = ctx.statics
+      ; static_map = ctx.static_map
+      ; in_func=func
+      }
     in
-    { run }
+    let v, inner_ctx2 = m inner_ctx in
+    let inner_ptr = length ctx.target + ctx.code_offset in
+    let jump_offset = length inner_ctx2.target in
+    (emit (BC.jump jump_offset)
+     >>= fun () ->
+     append ctx.target inner_target;
+     return (v, inner_ptr)
+    ) ctx
   ;;
 end
 
@@ -242,65 +231,66 @@ end = struct
     | Let l ->
       let* rt_off_prior = stack_offset in
       let arm_helper _i an _acc = compile an.rhs in
-      fold_left_mi arm_helper (return ()) l.binds >>
-      compile l.l_body >>
+      let* () = fold_left_mi arm_helper (return ()) l.binds in
+      let* () = compile l.l_body in
       let* rt_off_after = stack_offset in
       let diff = rt_off_after - rt_off_prior in
-      emit (set_stack_x diff) >> emit (drop diff)
+      let* () = emit (set_stack_x diff) in
+      emit (drop diff)
     | Fun f ->
       let n_args = Array.length f.f_args in
       let n_caps = Array.length f.captures in
       let closure_size = n_caps + 1 in
-      emit (alloc (1 + closure_size)) >>
-      emit (push_lit closure_size) >>
-      emit (fetch_stack 1) >>
-      emit (set_x_y 0) >>
+      let* () = emit (alloc (1 + closure_size)) in
+      let* () = emit (push_lit closure_size) in
+      let* () = emit (fetch_stack 1) in
+      let* () = emit (set_x_y 0) in
       (* wrote the closure size to heap *)
       let* ptr_off = stack_offset in
       let populate_captures i v _acc =
         let* off = stack_offset in
-        emit (fetch_stack (off - ptr_off)) >>
+        let* () = emit (fetch_stack (off - ptr_off)) in
         (* copied closure ptr to top *)
         let* enc_f = enclosing_func in
         let* v_off = var_index ?in_func:enc_f v in
-        emit (fetch_stack v_off) >>
+        let* () = emit (fetch_stack v_off) in
         (* copied closure val to top *)
-        emit (set_x_y (i + 1)) >>
+        let* () = emit (set_x_y (i + 1)) in
         (* wrote captured val to heap closure *)
         return ()
       in
-      fold_left_mi populate_captures (return ()) f.captures >>
+      let* () = fold_left_mi populate_captures (return ()) f.captures in
       let func_body_with_boilerplate =
-        emit (set_stack_x (n_caps + n_args + 1)) >>
+        let* () = emit (set_stack_x (n_caps + n_args + 1)) in
         (* wrote the return addr back above the args and captures,
          * reserved by caller *)
-        adjust_stack_offset 1 >>
+        let* () = adjust_stack_offset 1 in
         (* undo stack offset of moving the return addr *)
-        compile f.f_body >>
+        let* () = compile f.f_body in
         (* the good stuff *)
-        emit (set_stack_x (n_caps + n_args + 2)) >>
+        let* () = emit (set_stack_x (n_caps + n_args + 2)) in
         (* wrote the return value back above, same deal *)
-        emit (drop (n_caps + n_args)) >>
+        let* () = emit (drop (n_caps + n_args)) in
         emit return_x
       in
       let* _, code_ptr = out_of_line ?func:(Some f) func_body_with_boilerplate in
-      emit (fetch_stack 0) >>
+      let* () = emit (fetch_stack 0) in
       (* dup'd closure ptr *)
-      emit (push_lit code_ptr) >>
+      let* () = emit (push_lit code_ptr) in
       (* pushed func body code ptr to stack *)
       emit (set_x_y n_caps)
     (* wrote code ptr to closure *)
     | App a ->
       let arg_helper _i arg _acc = compile arg in
-      emit (reserve_stack 2) >>
-      fold_left_mi arg_helper (return ()) a.a_args >>
+      let* () = emit (reserve_stack 2) in
+      let* () = fold_left_mi arg_helper (return ()) a.a_args in
       (* wrote args to stack, with last arg at TOS *)
-      compile a.func >>
+      let* () = compile a.func in
       (* wrote closure ptr to stack *)
-      emit (fetch_stack 0) >>
-      emit (fetch_x 0) >>
+      let* () = emit (fetch_stack 0) in
+      let* () = emit (fetch_x 0) in
       (* fetched closure size to TOS *)
-      emit (fetch_region_x_y 1) >>
+      let* () = emit (fetch_region_x_y 1) in
       (* copied rest of closure to stack, consuming c. ptr *)
       emit call_x
   ;;
