@@ -4,20 +4,8 @@
 module OM = struct
   include Option
 
-  let bind a f =
-    match a with
-    | None -> None
-    | Some v -> f v
-  ;;
-
   let ( >>= ) = bind
   let return a = Some a
-
-  let map f a =
-    match a with
-    | None -> None
-    | Some v -> Some (f v)
-  ;;
 
   let ( >>| ) a f = map f a
 
@@ -38,10 +26,7 @@ end
 
 (* monad sig for result *)
 module RM = struct
-  open Result
-
-  type e
-  type 'a t = ('a, e) result
+  include Result
 
   let bind a f =
     match a with
@@ -51,12 +36,6 @@ module RM = struct
 
   let ( >>= ) = bind
   let return a = Ok a
-
-  let map f a =
-    match a with
-    | Error e -> Error e
-    | Ok v -> Ok (f v)
-  ;;
 
   let ( >>| ) a f = map f a
 
