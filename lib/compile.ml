@@ -1,54 +1,60 @@
-(*
-   * The idea for this module is to do the CST -> IR transformation.
- *
- *
-*)
+(* The idea for this module is to do the CST -> IR transformation. *)
 
 open Ir
 open Dynarray
 open Bytecode
 
-(* delayed computation monad to track stack effects and code offsets *)
 
+(* TODO fold error handling into this monad *)
 module type CompTracker = sig
+  (* delayed computation monad to track stack effects and code offsets *)
   type 'a t
   type op
+  type slot
 
   val return : 'a -> 'a t
   val bind : 'a t -> ('a -> 'b t) -> 'b t
   val emit : op -> unit t
-  val stack_offset : int t
-  val adjust_stack_offset : int -> unit t
   val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
   val ( >>= ) : 'a t -> ('a -> 'b t) -> 'b t
+  val stack_offset : int t
+  val adjust_stack_offset : int -> unit t
   val enclosing_func : Ir.func option t
+  val def_static : int -> slot Dynarray.t -> unit t
+  val ref_static : int -> (int * int) t
   val out_of_line : ?func:Ir.func -> 'b t -> ('b * int) t
-  val run_empty : 'a t -> op Dynarray.t
+  val run_empty : ?static_offset:int -> 'a t -> (slot Dynarray.t * op Dynarray.t)
 end
 
-module Tracker : CompTracker with type op := BC.op = struct
+module Tracker : CompTracker
+  with type op := BC.op
+   and type slot := BC.slot = struct
   type ctx =
     { code_offset : int
     ; stack_offset : int
     ; target : BC.op Dynarray.t
     ; statics : BC.slot Dynarray.t
     ; static_map : (int * (int * int)) list
+    ; next_static : int
     ; in_func : func option
     }
+  ;;
 
   type 'a t = ctx -> 'a * ctx
 
-  let run_empty action =
+  let run_empty ?(static_offset = 0) action =
     let empty_ctx =
       { code_offset = 0
       ; stack_offset = 0
       ; target = Dynarray.create ()
       ; statics = Dynarray.create ()
+      ; next_static = static_offset
       ; static_map = []
       ; in_func=None
       }
     in
-    (snd (action  empty_ctx)).target
+    let (_,outctx) = action empty_ctx in
+    outctx.statics, outctx.target
   ;;
 
   let return a ctx = a, ctx 
@@ -78,6 +84,7 @@ module Tracker : CompTracker with type op := BC.op = struct
       ; target = ctx.target
       ; statics = ctx.statics
       ; static_map = ctx.static_map
+      ; next_static = ctx.next_static
       ; in_func = ctx.in_func
       }
     in
@@ -92,11 +99,28 @@ module Tracker : CompTracker with type op := BC.op = struct
         ; target = ctx.target
         ; statics = ctx.statics
         ; static_map = ctx.static_map
+        ; next_static = ctx.next_static
         ; in_func = ctx.in_func
         }
   ;;
 
   let enclosing_func ctx = ctx.in_func, ctx 
+
+  let def_static idx contents ctx =
+    append ctx.statics contents;
+    let len = Dynarray.length contents in
+    let nelt = idx, (ctx.next_static, len) in
+    (), { code_offset=ctx.code_offset
+        ; stack_offset=ctx.stack_offset
+        ; target = ctx.target
+        ; statics = ctx.statics
+        ; static_map = nelt :: ctx.static_map
+        ; next_static = ctx.next_static + len 
+        ; in_func = ctx.in_func
+        }
+  ;;
+    
+  let ref_static idx ctx = List.assoc idx ctx.static_map, ctx
   
   (* implicitly assumes there will be an emitted instruction after
    * the out of line block that will be jumped to by the current
@@ -109,6 +133,7 @@ module Tracker : CompTracker with type op := BC.op = struct
       ; target = inner_target
       ; statics = ctx.statics
       ; static_map = ctx.static_map
+      ; next_static = ctx.next_static
       ; in_func=func
       }
     in
@@ -126,7 +151,7 @@ end
 module Compiler : sig
   type 'a t
 
-  val run_empty : 'a t -> BC.op Dynarray.t
+  val run_empty : ?static_offset:int -> 'a t -> BC.slot Dynarray.t * BC.op Dynarray.t
   val compile : Ir.expr -> unit t
 end = struct
   (* conventions:
@@ -174,44 +199,30 @@ end = struct
     helper f 0 acc
   ;;
 
-  (*
-   * let fold_right_mi (f : int -> 'b -> 'a -> 'b t) (acc : 'b t) (arr : 'a Array.t) =
-   *   let rec helper f i acc =
-   *     if i < 0
-   *     then acc
-   *     else (
-   *       let acc2 = acc >>= fun x -> f i x arr.(i) in
-   *       helper f (i - 1) acc2)
-   *   in
-   *   helper f (Array.length arr - 1) acc
-   * ;;
-   *)
-
-  (* TODO doing this with v_id is really fragile, since we aren't
-     super clear w/ the assuptions that that be ordered in any
-     way. Once we have a Mid/Low IR, we should have explicit ordering
-     there. Or just actually annotate / enforce some ordering on the
-     IDs. This one is the natural one (Sort of top to bottom, left to
-     right) *)
-  let var_index ?in_func v =
-    (* basic idea is that the stack offset is the distance from TOS to
-       the top of the closest function call, and that the id of a var 
-       (with some offset per domain) is basically the distance from 
-       the top of the function frame to the variable's slot. There is
-       also offsets for the return value and address, but those are handled
-       elsewhere. *)
+  let var_fetch ?in_func v =
     match v.v_domain with
-    | Static -> raise @@ Failure "TODO static refs"
+    | Static ->
+      let* offset, size = ref_static v.v_id in
+      begin match v.v_tp with
+        (* TODO terrible hack, we need a better way to represent if
+           something is a boxed val (pointer to heap/static) or an
+           unboxed value. *)
+        | Fun_t (_, _) -> return @@ push_lit offset
+        | _ ->
+          if size <> 1
+          then raise @@ Failure "Static fetchs of >1 size not supported"
+          else return @@ fetch_size offset 1
+      end 
     | Arg ->
       (* args are at the top of the function frame *)
       let* off = stack_offset in
-      return @@ off - v.v_id
+      return @@ fetch_stack @@ off - v.v_id
     | Closure ->
       (* captures are below args *)
       let* off = stack_offset in
       let arg_size_opt = Option.map (fun a -> Array.length a.f_args) in_func in
       let arg_size = Option.value ~default:0 arg_size_opt in
-      return @@ off - arg_size - v.v_id
+      return @@ fetch_stack @@ off - arg_size - v.v_id
     | Local ->
       (* locals are below both args and captures *)
       let* off = stack_offset in
@@ -219,15 +230,13 @@ end = struct
       let arg_size = Option.value ~default:0 arg_size_opt in
       let capture_size_opt = Option.map (fun a -> Array.length a.captures) in_func in
       let capture_size = Option.value ~default:0 capture_size_opt in
-      return @@ off - arg_size - capture_size - v.v_id
+      return @@ fetch_stack @@ off - arg_size - capture_size - v.v_id
   ;;
   
   let rec compile expr =
     match expr.inner with
-    | Lit l -> emit (push_lit l.value)
-    | Var v ->
-      let* off = var_index v in
-      emit (fetch_stack off)
+    | Lit l -> emit @@ push_lit l.value
+    | Var v -> var_fetch v >>= emit
     | Let l ->
       let* rt_off_prior = stack_offset in
       let arm_helper _i an _acc = compile an.rhs in
@@ -252,8 +261,8 @@ end = struct
         let* () = emit (fetch_stack (off - ptr_off)) in
         (* copied closure ptr to top *)
         let* enc_f = enclosing_func in
-        let* v_off = var_index ?in_func:enc_f v in
-        let* () = emit (fetch_stack v_off) in
+        let* var = var_fetch ?in_func:enc_f v in
+        let* () = emit var in
         (* copied closure val to top *)
         let* () = emit (set_x_y (i + 1)) in
         (* wrote captured val to heap closure *)

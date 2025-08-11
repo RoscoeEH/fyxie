@@ -10,6 +10,9 @@ type type_t =
   | Int_t
   | Fun_t of type_t array * type_t
   | Alias_t of name
+  (* TODO remove/resolve all type synonyms here, so that all
+     downstream sections just have types that look like values. Maybe
+     include them as a separate field to give nice error messages? *)
 
 type type_def =
   { lhs_t : name

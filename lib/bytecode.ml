@@ -5,8 +5,8 @@
 open Option
 
 (* NOTE we can't be using the module sig cause it hides the slot
-   constructors.  * Later if we want to actually compile to real
-   opcodes, we should add another step later. *)
+   constructors. Later if we want to actually compile to real opcodes,
+   we should add another step later. *)
 module BC = struct
   (* basic types that implement bytecode. Suitable for interpretation. *)
   type op =
@@ -19,14 +19,17 @@ module BC = struct
     | Alloc of int
     | Fetch of int
     | FetchRegion of int
+    | FetchSize of int * int
     | Set of int
     | Call
     | Ret
     | Jump of int
+  ;;
 
   type slot =
     | Num of int
     | Op of op [@warning "-37"]
+  ;;
 
   let stack_effect op =
     match op with
@@ -39,6 +42,7 @@ module BC = struct
     | Alloc _ -> some 1
     | Fetch _ -> some 0
     | FetchRegion _ -> none
+    | FetchSize (_,s) -> some s
     | Set _ -> some (-2)
     | Call -> some 0
     | Ret -> some (-1)
@@ -72,6 +76,7 @@ module BC = struct
     | Alloc i -> "alloc " ^ string_of_int i
     | Fetch i -> "fetch " ^ string_of_int i
     | FetchRegion n -> "fetchmany " ^ string_of_int n
+    | FetchSize (i,s) -> "fetchsize " ^ string_of_int i ^","^ string_of_int s
     | Set i -> "set " ^ string_of_int i
     | Call -> "call"
     | Ret -> "return"
@@ -107,6 +112,8 @@ module BC = struct
   (* push x, a pointer to a new heap space with N slots ( -- x ) *)
   let alloc n = Alloc n
 
+  (* NOTE: Non stack fetches range over both the heap and the static space. *)
+  
   (* push v, the value obtained by fetching x from TOS with N slots offset ( x -- y ) *)
   let fetch_x n = Fetch n
 
@@ -114,6 +121,9 @@ module BC = struct
    * offset, followed by x+N+1 up to x+N+(y-1) ( x y -- v..v_(y-1)) *)
   let fetch_region_x_y n = FetchRegion n
 
+  (* fetch the i'th through (i+s-1)'th slot onto the stack  *)
+  let fetch_size i s = FetchSize (i, s)
+  
   (* set value at x (deeper) plus N slots offset to y (TOS) ( x y -- ) *)
   let set_x_y n = Set n
 

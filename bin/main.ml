@@ -18,12 +18,23 @@ let process ast_e =
   print_endline "";
   let open Compile.Compiler in
   let c_action = compile ir_e in
-  let ops = run_empty c_action in
+  let statics, ops = run_empty ~static_offset:0 c_action in
   let strs =
     Dynarray.mapi (fun i op -> string_of_int i ^ " " ^ Bytecode.BC.pp_op op ^ "\n") ops
   in
   let s = Dynarray.fold_left ( ^ ) "Compiled\n" strs in
-  print_string s
+  print_string s;
+  let ss = Dynarray.length statics in
+  let cs = Dynarray.length ops in
+  let hs = 4092 in
+  let remainder = 8192 - ss - cs - hs in
+  Interpret.Interpreter.init_mem
+    ~mem_size:8192
+    ~static_off:0 ~statics:statics
+    ~stack_size:remainder ~stack_off:(ss + cs)
+    ~heap_size:hs ~heap_off:(ss + cs + remainder)
+    ~code_off:ss ~code:ops
+    (* TODO run it or someting, need a stop condition *)
 ;;
 
 let run1 () =
