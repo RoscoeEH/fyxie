@@ -52,13 +52,19 @@ module BC = struct
   let is_pointer s =
     match s with
     | Op _ -> false
-    | Num i -> Int.logand i 1 == 1
+    | Num i -> Int.logand i 1 = 1
   ;;
 
   let as_pointer s =
     match s with
     | Op _ -> none
-    | Num i -> if Int.logand i 1 == 1 then some (Int.shift_right i 1) else none
+    | Num i -> if Int.logand i 1 = 1 then some (Int.shift_right i 1) else none
+  ;;
+
+  let as_int s =
+    match s with
+    | Op _ -> none
+    | Num i -> if Int.logand i 1 = 1 then none else some (Int.shift_right i 1)
   ;;
 
   let zero = Num 0
@@ -85,7 +91,11 @@ module BC = struct
 
   let pp_slot s =
     match s with
-    | Num i -> string_of_int (Int.shift_right i 1)
+    | Num i ->
+      let x = string_of_int @@ Int.shift_right i 1 in
+      if is_pointer s
+      then "ptr: " ^ x
+      else "int: " ^ x 
     | Op o -> pp_op o
   ;;
 

@@ -37,7 +37,7 @@ let process ast_e =
     ~heap_size:hs ~heap_off:(ss + cs + remainder)
     ~code_off:ss ~code:ops;
   print_endline "Running...";
-  run_until_reached ~initial:ss ~final:(ss+(Dynarray.length ops)-1);
+  run_until_reached ~final:(ss+(Dynarray.length ops)-1);
   print_endline "Final Stack:";
   print_endline @@ pp_stack ()
 ;;

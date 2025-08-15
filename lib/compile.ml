@@ -277,8 +277,8 @@ end = struct
     | Fun f ->
       let n_caps = Array.length f.captures in
       let* () = emit (alloc (2 + n_caps)) in
+      let* () = emit (fetch_stack 0) in
       let* () = emit (push_lit (1+n_caps)) in
-      let* () = emit (fetch_stack 1) in
       let* () = emit (set_x_y 0) in                             (* wrote the closure size to heap *)
       let* ptr_off = stack_offset in
       let populate_captures i v _acc =
@@ -294,7 +294,7 @@ end = struct
       let* _, code_ptr = out_of_line ?func:(Some f) (func_body_with_boilerplate f) in
       let* () = emit (fetch_stack 0) in                         (* dup'd closure ptr *)
       let* () = emit (push_lit code_ptr) in                     (* pushed func body code ptr to stack *)
-      emit (set_x_y n_caps)                                     (* wrote code ptr to closure *)
+      emit (set_x_y (n_caps+1))                                 (* wrote code ptr to closure *)
     | App a ->
       let arg_helper _i arg _acc = compile arg in
       let* () = emit (reserve_stack 2) in

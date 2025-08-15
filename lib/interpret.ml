@@ -25,12 +25,6 @@ module Interpreter = struct
    * just to a number/pointer check (or not even that). This tagging is
    * for garbage collection. *)
 
-  let as_int s =
-    match s with
-    | Op _ -> none
-    | Num i -> if Int.logand i 1 == 1 then none else some (Int.shift_right i 1)
-  ;;
-
   let to_slot op = Op op
 
   let to_opcode slot =
@@ -95,8 +89,8 @@ module Interpreter = struct
 
   let pp_stack () =
     let out = ref "" in
-    for i = !sp+1 to !stack_end do
-      out := !out ^"\n"^ pp_slot !mem.(i)
+    for i = !stack_end downto !sp+1  do
+      out := !out ^ pp_slot !mem.(i) ^"\n"
     done;
     !out
   ;;
@@ -118,7 +112,7 @@ module Interpreter = struct
   let garbage_collect () =
     let old_heap = if !hp > !heap_mid then heap_mid else heap_start in
     let old_end = !old_heap + (!heap_mid - !heap_start) in
-    let new_heap = if old_heap == heap_mid then heap_start else heap_mid in
+    let new_heap = if old_heap = heap_mid then heap_start else heap_mid in
     let new_heap_next = ref !new_heap in
     let on_old_heap p = p >= !old_heap && p < old_end in
     let maybe_copy_slot i =
@@ -175,6 +169,14 @@ module Interpreter = struct
   ;;
 
   let run1 () =
+    let ptr_or_fail s = match as_pointer s with
+      | Some i -> i
+      | None -> raise (Failure ("Arg wasn't a pointer: " ^ pp_slot s))
+    in
+    let int_or_fail s = match as_int s with
+      | Some i -> i
+      | None -> raise (Failure ("Arg wasn't a number: " ^ pp_slot s))
+    in
     let pop () = sp := !sp + 1 in
     let push s =
       !mem.(!sp) <- s;
@@ -183,9 +185,15 @@ module Interpreter = struct
     let inc_pc () = pc := !pc + 1 in
     let op =
       match !mem.(!pc) with
-      | Num _ -> raise (Failure "Tried to execute something other than an opcode")
+      | Num _ ->
+        raise (Failure
+                 ("Tried to execute something other than an opcode: "
+                  ^ pp_slot !mem.(!pc)))
       | Op o -> o
     in
+    print_endline @@ "Executing " ^ pp_op op ^ " @ pc: " ^ string_of_int !pc;
+    print_endline "Stack:";
+    print_endline @@ pp_stack ();
     match op with
     | PushLit l ->
       push (from_int_as_num l);
@@ -215,24 +223,12 @@ module Interpreter = struct
       push (from_int_as_ptr h);
       inc_pc ()
     | Fetch n ->
-      let x =
-        Option.value
-          (as_pointer !mem.(!sp + 1))
-          ~default:(raise (Failure "Address of fetch wasn't a pointer"))
-      in
+      let x = ptr_or_fail @@ !mem.(!sp + 1) in
       !mem.(!sp + 1) <- !mem.(x + n);
       inc_pc ()
     | FetchRegion n ->
-      let x =
-        Option.value
-          (as_pointer !mem.(!sp + 2))
-          ~default:(raise (Failure "Address of fetch region wasn't a pointer"))
-      in
-      let y =
-        Option.value
-          (as_int !mem.(!sp + 1))
-          ~default:(raise (Failure "Size of fetch region wasn't a number"))
-      in
+      let x = ptr_or_fail @@ !mem.(!sp + 2) in
+      let y = int_or_fail @@ !mem.(!sp + 1) in
       pop ();
       for i = x + n to x + n + y do
         push !mem.(i)
@@ -245,38 +241,27 @@ module Interpreter = struct
       inc_pc ()
     | Set n ->
       let v = !mem.(!sp + 1) in
-      let x =
-        Option.value
-          (as_pointer !mem.(!sp + 2))
-          ~default:(raise (Failure "Address of set wasn't a pointer"))
-      in
+      let x = ptr_or_fail @@ !mem.(!sp + 2) in
       sp := !sp + 2;
       !mem.(x + n) <- v;
       inc_pc ()
     | Call ->
-      let x =
-        Option.value
-          (as_int !mem.(!sp + 1))
-          ~default:(raise (Failure "Address of call wasn't a pointer"))
-      in
+      let x = int_or_fail @@ !mem.(!sp + 1) in
       inc_pc ();
       !mem.(!sp + 1) <- from_int_as_ptr !pc;
       pc := x
     | Ret ->
-      let x =
-        Option.value
-          (as_int !mem.(!sp + 1))
-          ~default:(raise (Failure "Address of return wasn't a pointer"))
-      in
+      let x = int_or_fail !mem.(!sp + 1) in
       pop ();
       pc := x
-    | Jump n -> pc := !pc + n
+    | Jump n ->
+      inc_pc ();
+      pc := !pc + n
   ;;
 
-  let rec run_until_reached ~initial ~final =
-    pc := initial;
+  let rec run_until_reached ~final =
     run1 ();
     if !pc = final then ()
-    else run_until_reached ~initial ~final
+    else run_until_reached ~final
   ;;
 end
