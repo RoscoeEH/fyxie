@@ -253,13 +253,26 @@ let rec mark_as_captured (targets : (variable * int) list) body =
     ; inner=Let { l_body=body2
                 ; binds=Array.map2 (fun b a -> {lhs=b; rhs=a}) bind_vs arms2}}
   | Var v ->
-    if List.mem_assoc v targets
+    if List.mem_assoc v targets && v.v_domain <> Static
     then { tp=body.tp
          ; inner=Var { v_name=v.v_name
                      ; v_tp=v.v_tp
                      ; v_domain=Closure (* the point of this function *)
                      ; v_id=v.v_id }}
     else { tp=body.tp; inner=Var v}
+;;
+
+let rec refs_allow_static ?(ignore=[]) body =
+  (* To be called on an expression when attempting to compile a top level assignment *)
+  match body.inner with
+  | Lit _ -> true
+  | Fun f -> refs_allow_static ~ignore f.f_body
+  | Let l ->
+    refs_allow_static ~ignore:((Array.map (fun b->b.lhs) l.binds |> Array.to_list) @ ignore) l.l_body
+  | Var v -> 
+    List.mem v ignore || v.v_domain = Arg || v.v_domain = Static
+  | App a ->
+    refs_allow_static ~ignore a.func && Array.for_all (refs_allow_static ~ignore) a.a_args
 ;;
 
 let rec from_ast_type ?(defs=[]) at =
@@ -416,6 +429,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
       | Some v -> v
     in
     let cap_vars = List.map ensure_def cap_names in
+    let cap_vars = List.filter (fun v -> v.v_domain <> Static) cap_vars in
     let cap_vars_i = List.mapi (fun i a -> (a,i)) cap_vars in
     ctx.closures <- cap_vars;
     ctx.closure_next_id <- List.length cap_vars;

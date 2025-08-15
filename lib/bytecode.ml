@@ -85,7 +85,7 @@ module BC = struct
 
   let pp_slot s =
     match s with
-    | Num i -> string_of_int i
+    | Num i -> string_of_int (Int.shift_right i 1)
     | Op o -> pp_op o
   ;;
 

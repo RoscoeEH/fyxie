@@ -106,22 +106,40 @@ module Tracker : CompTracker
 
   let enclosing_func ctx = ctx.in_func, ctx 
 
+  (*
+   * let dec_static ~id ~size ctx =
+   *   let e = id, (ctx.next_static, size) in
+   *   (), { code_offset=ctx.code_offset
+   *       ; stack_offset=ctx.stack_offset
+   *       ; target = ctx.target
+   *       ; statics = ctx.statics
+   *       ; static_map = e :: ctx.static_map
+   *       ; next_static = ctx.next_static + size
+   *       ; in_func = ctx.in_func
+   *       }
+   * ;;
+   *)
+  
   let def_static idx contents ctx =
-    append ctx.statics contents;
     let len = Dynarray.length contents in
     let nelt = idx, (ctx.next_static, len) in
-    (), { code_offset=ctx.code_offset
-        ; stack_offset=ctx.stack_offset
-        ; target = ctx.target
-        ; statics = ctx.statics
-        ; static_map = nelt :: ctx.static_map
-        ; next_static = ctx.next_static + len 
-        ; in_func = ctx.in_func
-        }
+    let prior_dec = List.assoc_opt idx ctx.static_map in
+    match prior_dec with
+    | None ->
+      (), { code_offset=ctx.code_offset
+          ; stack_offset=ctx.stack_offset
+          ; target = ctx.target
+          ; statics = ctx.statics
+          ; static_map = nelt :: ctx.static_map
+          ; next_static = ctx.next_static + len 
+          ; in_func = ctx.in_func
+          }      
+    | Some _ -> 
+      raise @@ Failure "Multiple declaration of static."
   ;;
-    
+
   let ref_static idx ctx = List.assoc idx ctx.static_map, ctx
-  
+
   (* implicitly assumes there will be an emitted instruction after
    * the out of line block that will be jumped to by the current
    * computation line. *)
@@ -152,7 +170,10 @@ module Compiler : sig
   type 'a t
 
   val run_empty : ?static_offset:int -> 'a t -> BC.slot Dynarray.t * BC.op Dynarray.t
+  val then_stop : 'a t -> 'a t
   val compile : Ir.expr -> unit t
+  val compile_top_level : Ir.top_level -> unit t
+  val compile_mod : Ir.mod_t -> unit t
 end = struct
   (* conventions:
    * Every expresion, when evaluated, leaves a single new value on the stack
@@ -232,6 +253,13 @@ end = struct
       let capture_size = Option.value ~default:0 capture_size_opt in
       return @@ fetch_stack @@ off - arg_size - capture_size - v.v_id
   ;;
+
+  let emit_freeze () = emit @@ jump (-1)
+  let then_stop a =
+    let* x = a in
+    let* () = emit_freeze () in
+    return x
+  ;;
   
   let rec compile expr =
     match expr.inner with
@@ -247,60 +275,82 @@ end = struct
       let* () = emit (set_stack_x diff) in
       emit (drop diff)
     | Fun f ->
-      let n_args = Array.length f.f_args in
       let n_caps = Array.length f.captures in
-      let closure_size = n_caps + 1 in
-      let* () = emit (alloc (1 + closure_size)) in
-      let* () = emit (push_lit closure_size) in
+      let* () = emit (alloc (2 + n_caps)) in
+      let* () = emit (push_lit (1+n_caps)) in
       let* () = emit (fetch_stack 1) in
-      let* () = emit (set_x_y 0) in
-      (* wrote the closure size to heap *)
+      let* () = emit (set_x_y 0) in                             (* wrote the closure size to heap *)
       let* ptr_off = stack_offset in
       let populate_captures i v _acc =
         let* off = stack_offset in
-        let* () = emit (fetch_stack (off - ptr_off)) in
-        (* copied closure ptr to top *)
+        let* () = emit (fetch_stack (off - ptr_off)) in         (* copied closure ptr to top *)
         let* enc_f = enclosing_func in
         let* var = var_fetch ?in_func:enc_f v in
-        let* () = emit var in
-        (* copied closure val to top *)
-        let* () = emit (set_x_y (i + 1)) in
-        (* wrote captured val to heap closure *)
+        let* () = emit var in                                   (* copied closure val to top *)
+        let* () = emit (set_x_y (i + 1)) in                     (* wrote captured val to heap closure *)
         return ()
       in
       let* () = fold_left_mi populate_captures (return ()) f.captures in
-      let func_body_with_boilerplate =
-        let* () = emit (set_stack_x (n_caps + n_args + 1)) in
-        (* wrote the return addr back above the args and captures,
-         * reserved by caller *)
-        let* () = adjust_stack_offset 1 in
-        (* undo stack offset of moving the return addr *)
-        let* () = compile f.f_body in
-        (* the good stuff *)
-        let* () = emit (set_stack_x (n_caps + n_args + 2)) in
-        (* wrote the return value back above, same deal *)
-        let* () = emit (drop (n_caps + n_args)) in
-        emit return_x
-      in
-      let* _, code_ptr = out_of_line ?func:(Some f) func_body_with_boilerplate in
-      let* () = emit (fetch_stack 0) in
-      (* dup'd closure ptr *)
-      let* () = emit (push_lit code_ptr) in
-      (* pushed func body code ptr to stack *)
-      emit (set_x_y n_caps)
-    (* wrote code ptr to closure *)
+      let* _, code_ptr = out_of_line ?func:(Some f) (func_body_with_boilerplate f) in
+      let* () = emit (fetch_stack 0) in                         (* dup'd closure ptr *)
+      let* () = emit (push_lit code_ptr) in                     (* pushed func body code ptr to stack *)
+      emit (set_x_y n_caps)                                     (* wrote code ptr to closure *)
     | App a ->
       let arg_helper _i arg _acc = compile arg in
       let* () = emit (reserve_stack 2) in
-      let* () = fold_left_mi arg_helper (return ()) a.a_args in
-      (* wrote args to stack, with last arg at TOS *)
-      let* () = compile a.func in
-      (* wrote closure ptr to stack *)
+      let* () = fold_left_mi arg_helper (return ()) a.a_args in (* wrote args to stack, with last arg at TOS *)
+      let* () = compile a.func in                               (* wrote closure ptr to stack *)
       let* () = emit (fetch_stack 0) in
-      let* () = emit (fetch_x 0) in
-      (* fetched closure size to TOS *)
-      let* () = emit (fetch_region_x_y 1) in
-      (* copied rest of closure to stack, consuming c. ptr *)
+      let* () = emit (fetch_x 0) in                             (* fetched closure size to TOS *)
+      let* () = emit (fetch_region_x_y 1) in                    (* copied rest of closure to stack,
+                                                                 * consuming c. ptr *)
       emit call_x
+        
+  and func_body_with_boilerplate f =
+    let n_args = Array.length f.f_args in
+    let n_caps = Array.length f.captures in
+    let* () = emit (set_stack_x (n_caps + n_args + 1)) in       (* wrote the return addr back
+                                                                 * above the args and captures,
+                                                                 * reserved by caller *)
+    let* () = adjust_stack_offset 1 in                          (* undo stack offset of moving the return addr *)
+    let* () = compile f.f_body in                               (* the good stuff *)
+    let* () = emit (set_stack_x (n_caps + n_args + 2)) in       (* wrote the return value back above, same deal *)
+    let* () = emit (drop (n_caps + n_args)) in
+    emit return_x
+  ;;
+
+  let tl_an_rhs_value buf a =
+    (* only safe on top level assignments *)
+    if not @@ Ir.refs_allow_static a.rhs
+    then raise @@ Failure 
+        (Ir.PrettyPrint.pp_expr a.rhs
+         ^ " not allowed as a static. Does it have captured variables or runtime computation?\n")
+    else 
+    match a.rhs.inner with
+    | Lit l ->
+      let () = Dynarray.add_last buf @@ BC.from_int_as_num l.value in
+      return ()
+    | Var _ ->
+      raise @@ Failure "RHS variable not allowed at toplevel" 
+    | Fun f -> 
+      let () = Dynarray.add_last buf @@ BC.from_int_as_num 1 in
+      let* _, code_ptr = out_of_line ?func:(Some f) (func_body_with_boilerplate f) in
+      let () = Dynarray.add_last buf @@ BC.from_int_as_num code_ptr in
+      return ()
+    | _ -> raise @@ Failure "This should get caught by possible_static above"
+  ;;
+  
+  let compile_top_level tl =
+    match tl with
+    | TL_td _ -> raise @@ Failure "Typedefs should be resolved before compilation"
+    | TL_ex e -> compile e
+    | TL_an a ->
+      let buf = Dynarray.create () in
+      tl_an_rhs_value buf a
+  ;;
+
+  let compile_mod m =
+    let seq acc tl = acc >>= fun _ -> compile_top_level tl in
+    Array.fold_left seq (return ()) m.top
   ;;
 end

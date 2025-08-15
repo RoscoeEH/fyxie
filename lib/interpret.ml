@@ -16,14 +16,14 @@ module Interpreter = struct
   include Bytecode.BC
 
   (* Each slot is either an opcode or a value, distinguished by ocaml
- * case analysis.
- *
- * A value can be either an integer or a pointer, distinguished by
- * the low order bit.
- *
- * In a real compilation, one would eschew the op vs val check, and
- * just to a number/pointer check (or not even that). This tagging is
- * for garbage collection. *)
+   * case analysis.
+   *
+   * A value can be either an integer or a pointer, distinguished by
+   * the low order bit.
+   *
+   * In a real compilation, one would eschew the op vs val check, and
+   * just to a number/pointer check (or not even that). This tagging is
+   * for garbage collection. *)
 
   let as_int s =
     match s with
@@ -67,10 +67,10 @@ module Interpreter = struct
     heap_start   := heap_off;
     heap_end     := heap_off + heap_size - 1;
     heap_mid     := (!heap_start + !heap_end) / 2;
-    for i = 0 to Dynarray.length statics do
+    for i = 0 to Dynarray.length statics - 1 do
       Array.set !mem (static_off + i) @@ Dynarray.get statics i
     done;
-    for i = 0 to Dynarray.length code do
+    for i = 0 to Dynarray.length code - 1 do
       Array.set !mem (code_off + i) @@ Op (Dynarray.get code i)
     done;
     sp := !stack_end;
@@ -91,6 +91,14 @@ module Interpreter = struct
     sp           := (-1);
     hp           := (-1);
     pc           := (-1)
+  ;;
+
+  let pp_stack () =
+    let out = ref "" in
+    for i = !sp+1 to !stack_end do
+      out := !out ^"\n"^ pp_slot !mem.(i)
+    done;
+    !out
   ;;
 
   let fwd_addr ptr = as_pointer !mem.(ptr)
@@ -263,5 +271,12 @@ module Interpreter = struct
       pop ();
       pc := x
     | Jump n -> pc := !pc + n
+  ;;
+
+  let rec run_until_reached ~initial ~final =
+    pc := initial;
+    run1 ();
+    if !pc = final then ()
+    else run_until_reached ~initial ~final
   ;;
 end

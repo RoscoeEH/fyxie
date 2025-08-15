@@ -17,7 +17,7 @@ let process ast_e =
   print_endline (Ir.PrettyPrint.pp_expr ir_e);
   print_endline "";
   let open Compile.Compiler in
-  let c_action = compile ir_e in
+  let c_action = then_stop (compile ir_e) in
   let statics, ops = run_empty ~static_offset:0 c_action in
   let strs =
     Dynarray.mapi (fun i op -> string_of_int i ^ " " ^ Bytecode.BC.pp_op op ^ "\n") ops
@@ -28,13 +28,18 @@ let process ast_e =
   let cs = Dynarray.length ops in
   let hs = 4092 in
   let remainder = 8192 - ss - cs - hs in
-  Interpret.Interpreter.init_mem
+  print_endline @@ "Of 8192, " ^ string_of_int remainder ^ " left for stack";
+  let open Interpret.Interpreter in
+  init_mem
     ~mem_size:8192
     ~static_off:0 ~statics:statics
     ~stack_size:remainder ~stack_off:(ss + cs)
     ~heap_size:hs ~heap_off:(ss + cs + remainder)
-    ~code_off:ss ~code:ops
-    (* TODO run it or someting, need a stop condition *)
+    ~code_off:ss ~code:ops;
+  print_endline "Running...";
+  run_until_reached ~initial:ss ~final:(ss+(Dynarray.length ops)-1);
+  print_endline "Final Stack:";
+  print_endline @@ pp_stack ()
 ;;
 
 let run1 () =
