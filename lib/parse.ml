@@ -16,11 +16,13 @@ module Lex : sig
     | OBrace
     | CBrace
     | Colon
+    | Semi
     | Dot
     | Lambda
     | Question
     | Equal
     | Def
+    | Mod
   (* TODO expand lexing logic for literal symbols more than 1 char.
      * We will want that basically immediately for things like ":=" etc.
   *)
@@ -37,11 +39,13 @@ end = struct
     | OBrace
     | CBrace
     | Colon
+    | Semi
     | Dot
     | Lambda
     | Question
     | Equal
     | Def
+    | Mod
 
   let pp_token t =
     match t with
@@ -52,11 +56,13 @@ end = struct
     | OBrace -> "{"
     | CBrace -> "}"
     | Colon -> ":"
+    | Semi -> ";"
     | Dot -> "."
     | Lambda -> "λ"
     | Question -> "?"
     | Equal -> "="
     | Def -> ":="
+    | Mod -> "mod"
   ;;
 
   let peeked = ref none
@@ -94,7 +100,7 @@ end = struct
 
   let is_reserved c =
     match c with
-    | '(' | ')' | '{' | '}' | '\\' | '?' | '.' | '=' | ':' -> true
+    | '(' | ')' | '{' | '}' | '\\' | '?' | '.' | '=' | ':' | ';' -> true
     | _ -> false
   ;;
 
@@ -128,12 +134,14 @@ end = struct
     | Some '{' -> some OBrace
     | Some '}' -> some CBrace
     | Some ':' ->
-      (match getc () with
+      begin match getc () with
        | Some '=' -> some Def
        | Some c ->
          push_back c;
          some Colon
-       | None -> some Colon)
+       | None -> some Colon
+      end
+    | Some ';' -> some Semi
     | Some '.' -> some Dot
     | Some '\\' -> some Lambda
     | Some '?' -> some Question
@@ -143,7 +151,10 @@ end = struct
       Buffer.add_char buf c;
       let _ = read_while buf (fun x -> not (is_whitespace x || is_reserved x)) in
       let str = Buffer.contents buf in
-      some @@ Symbol str
+      begin match str with
+        | "mod" -> some Mod
+        | _ -> some @@ Symbol str
+      end
   ;;
 end
 
@@ -168,7 +179,7 @@ end
  * Assignment := Binding "=" Expression
  * LetBlock := "?" "(" Assignment+ ")" "." Expression
  * Expression := Number | VarRef | Function | Application | LetBlock
- * Module := "{" (TypeDef | Assignment | Module)* "}"
+ * Module := "mod" UString "{" (TypeDef | Assignment | Module)* "}"
 *)
 module Parse = struct
   type ctx =
@@ -207,18 +218,23 @@ module Parse = struct
 
   let ( <|> ) a b ctx =
     (* idea is to thread peeked through both, but have consumed be reset for the second alterative *)
-    let ctx' = { consumed = []; peeked = ctx.peeked } in
-    match a ctx' with
-    | Ok (x, ctx2) ->
-      let ctx2' = { consumed = ctx2.consumed @ ctx.consumed; peeked = ctx2.peeked } in
-      Ok (x, ctx2')
-    | Error (msg1, ctx2) ->
-      let ctx3 =
-        { consumed = ctx.consumed; peeked = List.rev_append ctx2.consumed ctx.peeked }
-      in
-      b ctx3
-      |> Result.map_error
-         @@ fun (msg2, c) -> "Alternative failed:\n  " ^ msg1 ^ "\nand\n  " ^ msg2, c
+    let no_con_ctx = {consumed=[] ; peeked=ctx.peeked} in
+    match a no_con_ctx with
+    | Ok (x,a_ctx) ->
+      let out_ctx = {consumed=a_ctx.consumed @ ctx.consumed; peeked=a_ctx.peeked} in
+      Ok (x,out_ctx)
+    | Error (a_msg,a_ctx) ->
+      let seen_list = List.rev_append a_ctx.consumed a_ctx.peeked in
+      let retry_ctx = {consumed=[] ; peeked=seen_list} in
+      begin match b retry_ctx with
+        | Ok (x,b_ctx) ->
+          let out_ctx = {consumed=b_ctx.consumed @ ctx.consumed; peeked=b_ctx.peeked} in
+          Ok(x,out_ctx)
+        | Error (b_msg,b_ctx) ->
+          let fail_ctx = {consumed=b_ctx.consumed @ ctx.consumed; peeked=b_ctx.peeked} in
+          let both_msg = "Alt. Failed: " ^ a_msg ^ " and " ^ b_msg in
+          Error (both_msg, fail_ctx)
+      end
   ;;
 
   let map f a = a >>= fun v -> return @@ f v
@@ -368,5 +384,27 @@ module Parse = struct
       return @@ Let (assigns, body)
     in
     ctx |> (num <|> name <|> app <|> lam <|> l_block)
+  ;;
+
+  let parse_top_level =
+    let* x =
+      (parse_assignment >>= fun x -> return @@ Ast.TL_an x)
+      <|> (parse_expression >>= fun x -> return @@ Ast.TL_ex x)
+    in
+    literal Semi >>
+    return x
+  ;;
+  
+  let parse_mod =
+    literal Mod >>
+    let* str = ustring in
+    let  name = match name_of_string str with
+      | Ok n -> n
+      | Error e -> raise @@ Failure e
+    in
+    let* contents = in_braces @@ many parse_top_level in
+    return { mod_name=some name
+           ; top = contents
+           }
   ;;
 end

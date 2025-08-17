@@ -67,6 +67,13 @@ let mod_assigns m =
       | _ -> none) m.top
 ;;
 
+let mod_exprs m = 
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_ex at -> some at
+      | _ -> none) m.top
+;;
+
 let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) @@ mod_types m
 
 let rec fetch_nearest_alias s ms =
@@ -131,9 +138,14 @@ module PrettyPrint = struct
   ;;
 
   let pp_mod m =
-    let prefix = indent_line "{Module :\n" in
-    let types = pp_lst pp_type_def @@ mod_types m in
-    let assigns = pp_lst pp_assignment @@ mod_assigns m in
-    prefix ^ types ^ "And assignments:\n" ^ assigns ^ "}"
+    let open Util.OM in
+    let n = m.mod_name >>| pp_name |> Option.value ~default:"[Anonymous]" in
+    let prefix = indent_line "{Module " ^ n ^ " :\nExpressions:\n" in
+    (*
+     * let types = pp_lst pp_type_def @@ mod_types m in
+     *)
+    let exprs = pp_lst ~sep:"\n" pp_expr @@ mod_exprs m in
+    let assigns = pp_lst ~sep:"\n" pp_assignment @@ mod_assigns m in
+    prefix ^ exprs ^ "Assignments:\n" ^ assigns ^ "}"
   ;;
 end 

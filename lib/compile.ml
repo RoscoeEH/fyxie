@@ -126,10 +126,13 @@ module Tracker : CompTracker
     let prior_dec = List.assoc_opt idx ctx.static_map in
     match prior_dec with
     | None ->
+      let updated_statics = Dynarray.create () in
+      Dynarray.append updated_statics ctx.statics;
+      Dynarray.append updated_statics contents;
       (), { code_offset=ctx.code_offset
           ; stack_offset=ctx.stack_offset
           ; target = ctx.target
-          ; statics = ctx.statics
+          ; statics = updated_statics
           ; static_map = nelt :: ctx.static_map
           ; next_static = ctx.next_static + len 
           ; in_func = ctx.in_func
@@ -228,7 +231,7 @@ end = struct
         (* TODO terrible hack, we need a better way to represent if
            something is a boxed val (pointer to heap/static) or an
            unboxed value. *)
-        | Fun_t (_, _) -> return @@ push_lit offset
+        | Fun_t (_, _) -> return @@ push_lit ~is_ptr:true offset
         | _ ->
           if size <> 1
           then raise @@ Failure "Static fetchs of >1 size not supported"
@@ -346,7 +349,8 @@ end = struct
     | TL_ex e -> compile e
     | TL_an a ->
       let buf = Dynarray.create () in
-      tl_an_rhs_value buf a
+      let* () = tl_an_rhs_value buf a in
+      def_static a.lhs.v_id buf
   ;;
 
   let compile_mod m =

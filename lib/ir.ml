@@ -175,6 +175,22 @@ module PrettyPrint = struct
           print_endline "") scopes
     in ()
   ;;
+
+  let pp_top_level tl = match tl with
+    | TL_an a -> pp_assignment a
+    | TL_ex e -> pp_expr e
+    | _ -> raise @@ Failure "top level td not supported"
+  ;;
+
+  let pp_mod m =
+    let open Util.OM in
+    let open Util.Pretty in
+    "Mod "
+    ^ (m.mod_name >>| pp_name |> Option.value ~default:"[Anonymous]")
+    ^ " "
+    ^ pp_arr ?sep:(Some "\n") pp_top_level m.top
+  ;;
+    
 end
 open PrettyPrint
 
@@ -465,5 +481,7 @@ let from_ast_top_level ctx tl = match tl with
 
 let from_ast_mod ctx (m : Ast.mod_t) =
   let tl' = List.map (from_ast_top_level ctx) m.top in
-  {mod_name = m.mod_name; top=Array.of_list tl'}
+  { mod_name = m.mod_name
+  ; top=Array.of_list tl'
+  }
 ;;    

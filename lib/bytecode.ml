@@ -9,8 +9,12 @@ open Option
    we should add another step later. *)
 module BC = struct
   (* basic types that implement bytecode. Suitable for interpretation. *)
-  type op =
-    | PushLit of int
+  type slot =
+    | Num of int
+    | Op of op (* [@warning "-37"] *)
+        
+  and op =
+    | PushLit of slot
     | ResStack of int
     | FetchSp of int
     | SetSp of int
@@ -24,11 +28,6 @@ module BC = struct
     | Call
     | Ret
     | Jump of int
-  ;;
-
-  type slot =
-    | Num of int
-    | Op of op [@warning "-37"]
   ;;
 
   let stack_effect op =
@@ -70,10 +69,11 @@ module BC = struct
   let zero = Num 0
   let from_int_as_num i = Num (Int.shift_left i 1)
   let from_int_as_ptr i = Num (Int.logor (Int.shift_left i 1) 1)
+  let from_int_literal i = Num i
 
-  let pp_op o =
+  let rec pp_op o =
     match o with
-    | PushLit i -> "pushlit " ^ string_of_int i
+    | PushLit i -> "pushlit " ^ pp_slot i
     | ResStack i -> "ressp " ^ string_of_int i
     | FetchSp i -> "fetchsp " ^ string_of_int i
     | SetSp i -> "setsp " ^ string_of_int i
@@ -86,10 +86,9 @@ module BC = struct
     | Set i -> "set " ^ string_of_int i
     | Call -> "call"
     | Ret -> "return"
-    | Jump i -> "jump " ^ string_of_int i
-  ;;
+    | Jump i -> "jump " ^ (if i >= 0 then "+" else "") ^ string_of_int i
 
-  let pp_slot s =
+  and pp_slot s =
     match s with
     | Num i ->
       let x = string_of_int @@ Int.shift_right i 1 in
@@ -102,7 +101,11 @@ module BC = struct
   (* codes *)
   (* stack indicies are calculated before the stack effect of the opcode. *)
   (* place a CT value on the RT stack ( -- x ) *)
-  let push_lit n = PushLit n
+  let push_lit ?(is_ptr = false) i =
+    if is_ptr
+    then PushLit (from_int_as_ptr i)
+    else PushLit (from_int_as_num i)
+  ;;
 
   (* reserve N new slots on the RT stack ( -- x_1 ... x_n ) *)
   let reserve_stack n = ResStack n

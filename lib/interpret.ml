@@ -196,7 +196,7 @@ module Interpreter = struct
     print_endline @@ pp_stack ();
     match op with
     | PushLit l ->
-      push (from_int_as_num l);
+      push l;
       inc_pc ()
     | ResStack s ->
       sp := !sp - s;
@@ -230,12 +230,12 @@ module Interpreter = struct
       let x = ptr_or_fail @@ !mem.(!sp + 2) in
       let y = int_or_fail @@ !mem.(!sp + 1) in
       pop ();
-      for i = x + n to x + n + y do
+      for i = x + n to x + n + y - 1 do
         push !mem.(i)
       done;
       inc_pc ()
     | FetchSize (x, n) ->
-      for i = x to x + n do
+      for i = x to x + n - 1 do
         push !mem.(i)
       done;
       inc_pc ()

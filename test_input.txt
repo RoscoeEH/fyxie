@@ -1,3 +1,8 @@
-? ( fst   : (Int Int Int) = \ x:Int y:Int . x ) .
-  ? ( const : (Int Int) = \ y:Int . (fst 0 y) ) .
- ( const 69 )
+
+mod Test {
+    fst:(Int Int Int) = \a:Int b:Int . a ;
+
+    const:(Int Int) = \v:Int . (fst 42 v) ;
+
+    (const 35) ;
+}
