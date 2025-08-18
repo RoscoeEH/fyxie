@@ -20,9 +20,10 @@ module type CompTracker = sig
   val stack_offset : int t
   val adjust_stack_offset : int -> unit t
   val enclosing_func : Ir.func option t
+  val dec_static : id:int -> size:int-> unit t
   val def_static : int -> slot Dynarray.t -> unit t
   val ref_static : int -> (int * int) t
-  val out_of_line : ?func:Ir.func -> 'b t -> ('b * int) t
+  val out_of_line : Ir.func -> 'b t -> ('b * int) t
   val run_empty : ?static_offset:int -> 'a t -> (slot Dynarray.t * op Dynarray.t)
 end
 
@@ -106,39 +107,42 @@ module Tracker : CompTracker
 
   let enclosing_func ctx = ctx.in_func, ctx 
 
-  (*
-   * let dec_static ~id ~size ctx =
-   *   let e = id, (ctx.next_static, size) in
-   *   (), { code_offset=ctx.code_offset
-   *       ; stack_offset=ctx.stack_offset
-   *       ; target = ctx.target
-   *       ; statics = ctx.statics
-   *       ; static_map = e :: ctx.static_map
-   *       ; next_static = ctx.next_static + size
-   *       ; in_func = ctx.in_func
-   *       }
-   * ;;
-   *)
+  let dec_static ~id ~size ctx =
+    let e = id, (ctx.next_static, size) in
+    let n_size = ctx.next_static + size in
+    let statics = Dynarray.make n_size BC.zero in
+    (), { code_offset=ctx.code_offset + size
+        ; stack_offset=ctx.stack_offset
+        ; target = ctx.target
+        ; statics = statics
+        ; static_map = e :: ctx.static_map
+        ; next_static = ctx.next_static + size
+        ; in_func = ctx.in_func
+        }
+  ;;
   
   let def_static idx contents ctx =
     let len = Dynarray.length contents in
-    let nelt = idx, (ctx.next_static, len) in
     let prior_dec = List.assoc_opt idx ctx.static_map in
     match prior_dec with
     | None ->
-      let updated_statics = Dynarray.create () in
-      Dynarray.append updated_statics ctx.statics;
-      Dynarray.append updated_statics contents;
-      (), { code_offset=ctx.code_offset
-          ; stack_offset=ctx.stack_offset
-          ; target = ctx.target
-          ; statics = updated_statics
-          ; static_map = nelt :: ctx.static_map
-          ; next_static = ctx.next_static + len 
-          ; in_func = ctx.in_func
-          }      
-    | Some _ -> 
-      raise @@ Failure "Multiple declaration of static."
+      raise @@ Failure "Def on non-declared static."
+    | Some (offset, size) ->
+      if size <> len
+      then raise @@ Failure "Def and dec static size don't match."
+      else
+        let updated_statics = ctx.statics in
+        for i = 0 to size-1 do
+          Dynarray.set updated_statics (i+offset) (Dynarray.get contents i)
+        done;
+        (), { code_offset=ctx.code_offset
+            ; stack_offset=ctx.stack_offset
+            ; target = ctx.target
+            ; statics = updated_statics
+            ; static_map =  ctx.static_map
+            ; next_static = ctx.next_static
+            ; in_func = ctx.in_func
+            }
   ;;
 
   let ref_static idx ctx = List.assoc idx ctx.static_map, ctx
@@ -146,7 +150,17 @@ module Tracker : CompTracker
   (* implicitly assumes there will be an emitted instruction after
    * the out of line block that will be jumped to by the current
    * computation line. *)
-  let out_of_line ?func m = fun ctx ->
+  let out_of_line func m = fun ctx ->
+    let adjust_code_offset ctx =
+      (), { code_offset=ctx.code_offset - 1
+          ; stack_offset=ctx.stack_offset
+          ; target = ctx.target
+          ; statics = ctx.statics
+          ; static_map = ctx.static_map
+          ; next_static = ctx.next_static
+          ; in_func = ctx.in_func
+          }
+    in
     let inner_target = Dynarray.create () in
     let inner_ctx =
       { code_offset = ctx.code_offset + 1
@@ -155,28 +169,28 @@ module Tracker : CompTracker
       ; statics = ctx.statics
       ; static_map = ctx.static_map
       ; next_static = ctx.next_static
-      ; in_func=func
+      ; in_func=(Some func)
       }
     in
     let v, inner_ctx2 = m inner_ctx in
-    let inner_ptr = length ctx.target + ctx.code_offset in
+    let inner_ptr = length ctx.target + ctx.code_offset + 1 in
     let jump_offset = length inner_ctx2.target in
-    (emit (BC.jump jump_offset)
-     >>= fun () ->
-     append ctx.target inner_target;
-     return (v, inner_ptr)
-    ) ctx
+    ctx |> (let* () = emit (BC.jump jump_offset) in
+            append ctx.target inner_target;
+            let* () = adjust_code_offset in
+            (* NOTE not sure why we need this adjustment. Something about the jump being counted twice? *)
+            return (v, inner_ptr))
   ;;
 end
 
 module Compiler : sig
-  type 'a t
-
+  type 'a t = 'a Tracker.t
   val run_empty : ?static_offset:int -> 'a t -> BC.slot Dynarray.t * BC.op Dynarray.t
   val then_stop : 'a t -> 'a t
   val compile : Ir.expr -> unit t
   val compile_top_level : Ir.top_level -> unit t
   val compile_mod : Ir.mod_t -> unit t
+  val static_pass_mod : Ir.mod_t -> unit t
 end = struct
   (* conventions:
    * Every expresion, when evaluated, leaves a single new value on the stack
@@ -223,7 +237,14 @@ end = struct
     helper f 0 acc
   ;;
 
-  let var_fetch ?in_func v =
+  let var_fetch v =
+    (* Idea here is that stack_offset trackes changes inside the body,
+     * but you have to do offset for captures and args yourself
+     * since they are populated by the caller *)
+    let* in_func = enclosing_func in
+    let n_args = Option.map (fun f -> Array.length f.f_args) in_func in
+    let n_caps = Option.map (fun f -> Array.length f.captures) in_func in
+
     match v.v_domain with
     | Static ->
       let* offset, size = ref_static v.v_id in
@@ -240,21 +261,19 @@ end = struct
     | Arg ->
       (* args are at the top of the function frame *)
       let* off = stack_offset in
-      return @@ fetch_stack @@ off - v.v_id
+      print_endline ("n_args " ^ (string_of_int @@ Option.get n_args)
+                     ^ " n_caps " ^ string_of_int (Option.get n_caps)
+                    ^ " off " ^ string_of_int off
+                    ^ " v_id " ^ string_of_int v.v_id);
+      return @@ fetch_stack @@ (Option.get n_args) + (Option.get n_caps) + off - v.v_id - 1
     | Closure ->
       (* captures are below args *)
       let* off = stack_offset in
-      let arg_size_opt = Option.map (fun a -> Array.length a.f_args) in_func in
-      let arg_size = Option.value ~default:0 arg_size_opt in
-      return @@ fetch_stack @@ off - arg_size - v.v_id
+      return @@ fetch_stack @@ off - (Option.get n_caps) - v.v_id - 1
     | Local ->
       (* locals are below both args and captures *)
       let* off = stack_offset in
-      let arg_size_opt = Option.map (fun a -> Array.length a.f_args) in_func in
-      let arg_size = Option.value ~default:0 arg_size_opt in
-      let capture_size_opt = Option.map (fun a -> Array.length a.captures) in_func in
-      let capture_size = Option.value ~default:0 capture_size_opt in
-      return @@ fetch_stack @@ off - arg_size - capture_size - v.v_id
+      return @@ fetch_stack @@ off - v.v_id
   ;;
 
   let emit_freeze () = emit @@ jump (-1)
@@ -269,14 +288,12 @@ end = struct
     | Lit l -> emit @@ push_lit l.value
     | Var v -> var_fetch v >>= emit
     | Let l ->
-      let* rt_off_prior = stack_offset in
+      let n_binds = Array.length l.binds in
       let arm_helper _i an _acc = compile an.rhs in
       let* () = fold_left_mi arm_helper (return ()) l.binds in
       let* () = compile l.l_body in
-      let* rt_off_after = stack_offset in
-      let diff = rt_off_after - rt_off_prior in
-      let* () = emit (set_stack_x diff) in
-      emit (drop diff)
+      let* () = emit (set_stack_x n_binds) in
+      emit (drop (n_binds - 1))
     | Fun f ->
       let n_caps = Array.length f.captures in
       let* () = emit (alloc (2 + n_caps)) in
@@ -287,14 +304,13 @@ end = struct
       let populate_captures i v _acc =
         let* off = stack_offset in
         let* () = emit (fetch_stack (off - ptr_off)) in         (* copied closure ptr to top *)
-        let* enc_f = enclosing_func in
-        let* var = var_fetch ?in_func:enc_f v in
+        let* var = var_fetch v in
         let* () = emit var in                                   (* copied closure val to top *)
         let* () = emit (set_x_y (i + 1)) in                     (* wrote captured val to heap closure *)
         return ()
       in
       let* () = fold_left_mi populate_captures (return ()) f.captures in
-      let* _, code_ptr = out_of_line ?func:(Some f) (func_body_with_boilerplate f) in
+      let* _, code_ptr = out_of_line f (func_body_with_boilerplate f) in
       let* () = emit (fetch_stack 0) in                         (* dup'd closure ptr *)
       let* () = emit (push_lit code_ptr) in                     (* pushed func body code ptr to stack *)
       emit (set_x_y (n_caps+1))                                 (* wrote code ptr to closure *)
@@ -337,7 +353,7 @@ end = struct
       raise @@ Failure "RHS variable not allowed at toplevel" 
     | Fun f -> 
       let () = Dynarray.add_last buf @@ BC.from_int_as_num 1 in
-      let* _, code_ptr = out_of_line ?func:(Some f) (func_body_with_boilerplate f) in
+      let* _, code_ptr = out_of_line f (func_body_with_boilerplate f) in
       let () = Dynarray.add_last buf @@ BC.from_int_as_num code_ptr in
       return ()
     | _ -> raise @@ Failure "This should get caught by possible_static above"
@@ -357,4 +373,20 @@ end = struct
     let seq acc tl = acc >>= fun _ -> compile_top_level tl in
     Array.fold_left seq (return ()) m.top
   ;;
+
+  let static_pass_mod m =
+    let helper acc tl =
+      match tl with
+      | TL_an a ->
+        let id = a.lhs.v_id in
+        let size = match a.lhs.v_tp with
+          | Fun_t (_,_) -> 2
+          | _ -> 1
+        in
+        let* x = acc in
+        let* () = dec_static ~id ~size in
+        return x
+      | _ -> acc
+    in
+    Array.fold_left helper (return ()) m.top
 end

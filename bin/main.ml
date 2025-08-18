@@ -1,5 +1,4 @@
 let init_and_run statics ops =
-
   let ss = Dynarray.length statics in
   let cs = Dynarray.length ops in
   let hs = 4092 in
@@ -13,7 +12,7 @@ let init_and_run statics ops =
   let ops_strs =
     Dynarray.mapi (fun i op -> "\t" ^ string_of_int (i+ss) ^ "\t" ^ Bytecode.BC.pp_op op ^ "\n") ops
   in
-  print_string @@ Dynarray.fold_left ( ^ ) "\nCompiled\n" ops_strs ;
+  print_string @@ Dynarray.fold_left ( ^ ) "\nCompiled\n" ops_strs;
   let open Interpret.Interpreter in
   init_mem
     ~mem_size:8192
@@ -27,6 +26,29 @@ let init_and_run statics ops =
   print_endline @@ pp_stack ()
 ;;
 
+let handle_module () =
+  (* TODO switch this to be per file or something, work by changing the channel in Lex *)
+  let open Parse.Parse in
+  let open Ast in
+  let ast_m,_ = match parse_mod empty_context with
+    | Ok m -> m
+    | Error (e,_) -> raise @@ Failure e
+  in
+  print_endline "Ast:";
+  print_endline @@ PrettyPrint.pp_mod ast_m;
+  
+  let open Ir in
+  let ir_m = from_ast_mod (empty_ctx ()) ast_m in
+  print_endline "\nIR:";
+  print_endline @@ PrettyPrint.pp_mod ir_m;
+  let open Compile.Compiler in
+  let c_action = then_stop (Compile.Tracker.bind (static_pass_mod ir_m) (fun _ -> compile_mod ir_m)) in
+  let statics, ops = run_empty ~static_offset:0 c_action in
+  init_and_run statics ops
+;;
+
+
+let () = handle_module ()
 (*
  * let get_next_expr () =
  *   let _ = Parse.Parse.empty_context in
@@ -58,31 +80,6 @@ let init_and_run statics ops =
  *   process e
  * ;;
  *)
-
-
-let handle_module () =
-  (* TODO switch this to be per file or something, work by changing the channel in Lex *)
-  let open Parse.Parse in
-  let open Ast in
-  let ast_m,_ = match parse_mod empty_context with
-    | Ok m -> m
-    | Error (e,_) -> raise @@ Failure e
-  in
-  print_endline "Ast:";
-  print_endline @@ PrettyPrint.pp_mod ast_m;
-  
-  let open Ir in
-  let ir_m = from_ast_mod (empty_ctx ()) ast_m in
-  print_endline "\nIR:";
-  print_endline @@ PrettyPrint.pp_mod ir_m;
-
-  let open Compile.Compiler in
-  let c_action = then_stop @@ compile_mod ir_m in
-  let statics, ops = run_empty ~static_offset:0 c_action in
-  init_and_run statics ops
-;;
-
 (*
  * let () = run1 ()
  *)
-let () = handle_module ()

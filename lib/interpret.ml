@@ -229,7 +229,7 @@ module Interpreter = struct
     | FetchRegion n ->
       let x = ptr_or_fail @@ !mem.(!sp + 2) in
       let y = int_or_fail @@ !mem.(!sp + 1) in
-      pop ();
+      sp := !sp + 2;
       for i = x + n to x + n + y - 1 do
         push !mem.(i)
       done;
@@ -248,7 +248,7 @@ module Interpreter = struct
     | Call ->
       let x = int_or_fail @@ !mem.(!sp + 1) in
       inc_pc ();
-      !mem.(!sp + 1) <- from_int_as_ptr !pc;
+      !mem.(!sp + 1) <- from_int_as_num !pc;
       pc := x
     | Ret ->
       let x = int_or_fail !mem.(!sp + 1) in

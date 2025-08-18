@@ -1,8 +1,9 @@
 
 mod Test {
-    fst:(Int Int Int) = \a:Int b:Int . a ;
 
-    const:(Int Int) = \v:Int . (fst 42 v) ;
+    a:(Int Int Int Int) = \x:Int y:Int z:Int . x ;
+    b:(Int Int Int Int) = \x:Int y:Int z:Int . ? (a:Int = 0 ) . y ;
+    c:(Int Int Int Int) = \x:Int y:Int z:Int . z ;
 
-    (const 35) ;
+    (b 11 22 33) ;
 }
