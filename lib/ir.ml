@@ -3,7 +3,6 @@ open Option
 open Result
 open List
 open Array
-open Util.Pretty
 
 open Name
 

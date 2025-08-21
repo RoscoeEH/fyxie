@@ -49,8 +49,16 @@ let handle_module () =
   init_and_run statics ops
 ;;
 
+let () =
+  let () = 
+    if Array.length Sys.argv <> 2
+    then Parse.Lex.channel := In_channel.stdin
+    else
+      let f = Sys.argv.(1) in
+      Parse.Lex.channel := In_channel.open_text f
+  in
+  handle_module ()
 
-let () = handle_module ()
 (*
  * let get_next_expr () =
  *   let _ = Parse.Parse.empty_context in

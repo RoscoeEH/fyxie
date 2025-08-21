@@ -12,7 +12,7 @@ clean:
 
 .PHONY: test
 test:
-	opam exec -- dune exec bin/main.exe < test_input.txt
+	opam exec -- dune exec bin/main.exe test_input.txt
 
 fmt:
 	opam exec -- dune fmt

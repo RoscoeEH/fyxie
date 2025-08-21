@@ -1,20 +1,11 @@
-
-mod Test {
-   mod Offsets {
-    	a:(Int Int Int Int) = \x:Int y:Int z:Int . x ;
-	b:(Int Int Int Int) = \x:Int y:Int z:Int . ? (a:Int = 0 ) . y ;
-	c:(Int Int Int Int) = \x:Int y:Int z:Int . z ;
-        (b 11 22 33) ;
-   } ;
-   mod MRec {
-      t:(Int Int Int) = \x:Int y:Int . x ;
-      f:(Int Int Int) = \x:Int y:Int . y ;
-
-      s:((Int Int Int) Int Int) = \c:(Int Int Int) z:Int . (c z (p c z)) ;
-      p:((Int Int Int) Int Int) = \c:(Int Int Int) z:Int . (c (s c z) 99) ;
-
-      (s t 88) ;
-      (s f 88) ;
-   } ;
-} ;
+mod T {
+    mod X {
+        a:Int=0;
+    };
+    a:Int = 1;
+    a;
+    X_a;
+    T_a;
+    T_X_a;
+}
 
