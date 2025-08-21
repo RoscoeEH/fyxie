@@ -386,25 +386,26 @@ module Parse = struct
     ctx |> (num <|> name <|> app <|> lam <|> l_block)
   ;;
 
-  let parse_top_level =
+  let rec parse_top_level ctx =
+    ctx |>
     let* x =
-      (parse_assignment >>= fun x -> return @@ Ast.TL_an x)
-      <|> (parse_expression >>= fun x -> return @@ Ast.TL_ex x)
+      (parse_mod >>| fun x -> Ast.TL_m x)
+      <|> (parse_assignment >>| fun x -> Ast.TL_an x)
+      <|> (parse_expression >>| fun x -> Ast.TL_ex x)
     in
     literal Semi >>
     return x
-  ;;
-  
-  let parse_mod =
-    literal Mod >>
+  and parse_mod ctx =
+    ctx |>
+    (literal Mod >>
     let* str = ustring in
-    let  name = match name_of_string str with
+    let  name = match name_atom_of_string str with
       | Ok n -> n
       | Error e -> raise @@ Failure e
     in
     let* contents = in_braces @@ many parse_top_level in
     return { mod_name=some name
            ; top = contents
-           }
+           })
   ;;
 end

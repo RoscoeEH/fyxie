@@ -3,6 +3,7 @@ open Option
 open Result
 open List
 open Array
+open Util.Pretty
 
 open Name
 
@@ -71,9 +72,10 @@ type top_level =
   | TL_td of type_def
   | TL_an of assignment
   | TL_ex of expr
+  | TL_m of mod_t
 
-type mod_t =
-  { mod_name : name option
+and mod_t =
+  { mod_name : name_atom option
   ; top : top_level Array.t
   }
 
@@ -90,6 +92,14 @@ let mod_assigns m =
       | TL_an at -> some at
       | _ -> none) @@ to_list m.top
 ;;
+
+let mod_submods m =
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_m m -> some m
+      | _ -> none) @@ to_list m.top
+;;
+
 
 let fetch_alias s defs = List.find_opt (fun td -> td.lhs_t = s) defs
 
@@ -176,17 +186,17 @@ module PrettyPrint = struct
     in ()
   ;;
 
-  let pp_top_level tl = match tl with
+  let rec pp_top_level tl = match tl with
     | TL_an a -> pp_assignment a
     | TL_ex e -> pp_expr e
+    | TL_m m -> pp_mod m
     | _ -> raise @@ Failure "top level td not supported"
-  ;;
 
-  let pp_mod m =
+  and pp_mod m =
     let open Util.OM in
     let open Util.Pretty in
     "Mod "
-    ^ (m.mod_name >>| pp_name |> Option.value ~default:"[Anonymous]")
+    ^ (m.mod_name >>| pp_name_atom |> Option.value ~default:"[Anonymous]")
     ^ " "
     ^ pp_arr ?sep:(Some "\n") pp_top_level m.top
   ;;
@@ -317,6 +327,7 @@ type ctx =
   ; mutable arg_next_id     : int
   ; mutable closures        : variable list
   ; mutable closure_next_id : int
+  ; mutable current_mod     : name_atom list
   }
 
 let empty_ctx () = { defs            = []
@@ -327,7 +338,8 @@ let empty_ctx () = { defs            = []
                    ; args            = []
                    ; arg_next_id     = 0 
                    ; closures        = []
-                   ; closure_next_id = 0 
+                   ; closure_next_id = 0
+                   ; current_mod     = []
                    }
 
 let save ctx =
@@ -341,6 +353,7 @@ let save ctx =
   ; arg_next_id     = ctx.arg_next_id
   ; closures        = ctx.closures
   ; closure_next_id = ctx.closure_next_id
+  ; current_mod     = ctx.current_mod
   }
 ;;
 
@@ -354,7 +367,8 @@ let restore ~dst ~src =
   dst.args            <- src.args           ;
   dst.arg_next_id     <- src.arg_next_id    ;
   dst.closures        <- src.closures       ;
-  dst.closure_next_id <- src.closure_next_id
+  dst.closure_next_id <- src.closure_next_id;
+  dst.current_mod     <- src.current_mod
 ;;
 
 let next_id ctx domain = match domain with
@@ -372,9 +386,22 @@ let next_id ctx domain = match domain with
     ctx.closure_next_id-1
 ;;
 
+let make_name_abs ctx name =
+  let helper p n =
+    match add_prefix p n with
+    | Ok x -> x
+    | Error e -> raise @@ Failure e
+  in
+  List.fold_right helper ctx.current_mod name
+;;
+
 let insert ctx name tp domain =
   let id = next_id ctx domain in
-  let v = {v_name=name; v_tp=tp; v_domain=domain; v_id=id} in
+  let n = match domain with
+    | Static -> make_name_abs ctx name
+    | _ -> name
+  in
+  let v = {v_name=n; v_tp=tp; v_domain=domain; v_id=id} in
   (match domain with
   | Static -> ctx.statics <- v :: ctx.statics
   | Local -> ctx.locals <- v :: ctx.locals
@@ -384,11 +411,13 @@ let insert ctx name tp domain =
 ;;
 
 let lookup ctx name =
-  let pred n = name = n.v_name in
+  let open Util.OM in
+  let abs_name = make_name_abs ctx name in
+  let pred n = name = n.v_name || abs_name = n.v_name in
   let scopes = [ctx.locals; ctx.args; ctx.closures; ctx.statics] in
   let results = List.map (List.find_opt pred) scopes in
-  let r = List.fold_left (fun a b -> if is_some a then a else b) none results in
-  r
+  let r = List.fold_left (<|>) none results in
+  r 
 ;;
 
 let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
@@ -397,10 +426,25 @@ let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
   let expr = an.rhs in
   let tp' = from_ast_type ~defs:ctx.defs tp in
   let expr' = from_ast_expr ctx expr in
-  let var = insert ctx n tp' domain in
-  match unify_types ~defs:ctx.defs expr'.tp tp' with
-  | Error e -> raise @@ Failure e
-  | Ok _u_tp' -> {lhs=var; rhs=expr'}
+  match lookup ctx n with
+  | None -> 
+    let var = insert ctx n tp' domain in
+    begin match unify_types ~defs:ctx.defs expr'.tp tp' with
+    | Error e -> raise @@ Failure e
+    | Ok _u_tp' -> {lhs=var; rhs=expr'}
+    end
+  | Some var ->
+    let open Util.RM in
+    let an_type_match = unify_types ~defs:ctx.defs expr'.tp tp' in
+    let v_dec_match =
+      if var.v_domain = Static && domain <> Static
+      then Ok(tp')
+      else (unify_types ~defs:ctx.defs var.v_tp tp')
+    in
+    begin match an_type_match, v_dec_match with
+      | Error e, _ | _, Error e -> raise @@ Failure e
+      | _ -> {lhs=var; rhs=expr'}
+    end
 
 and from_ast_expr ctx (expr : Ast.expr) = match expr with
   | Lit i -> {tp=Int_t; inner=Lit {value=i}}
@@ -466,7 +510,41 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
                 ; f_body=body'}}
 ;;
 
-let from_ast_top_level ctx tl = match tl with
+let tl_assign ~domain ~ctx (an : Ast.assignment) =
+  (* Mutates ctx to define the name in the given domain *)
+  let (n,tp) = an.lhs in
+  let tp' = from_ast_type ~defs:ctx.defs tp in
+  let _ = insert ctx n tp' domain in
+  ()
+;;
+
+let step_down_cur_mod ctx (m:Ast.mod_t) =
+  let open Util.OM in
+  let n_mod cm mn = mn >>| (fun x -> cm @ [x]) |> Option.value ~default:cm in
+  ctx.current_mod <- n_mod ctx.current_mod m.mod_name
+;;
+
+let declare_ahead ctx (m : Ast.mod_t) =
+  let rec helper tls =
+      List.map (fun x -> match x with
+          | Ast.TL_an a -> tl_assign ~domain:Static ~ctx a
+          | Ast.TL_m sm ->
+            let p_mod = ctx.current_mod in
+            step_down_cur_mod ctx sm;
+            let _ = helper sm.top in 
+            ctx.current_mod <- p_mod;
+            ()
+          | _ -> ()
+        ) tls      
+  in
+  let p_mod = ctx.current_mod in
+  step_down_cur_mod ctx m;
+  let _ = helper m.top in
+  ctx.current_mod <- p_mod;
+  ()
+;;
+
+let rec from_ast_top_level ctx tl = match tl with
   | Ast.TL_td td ->
     let td' = from_ast_type_def ~defs:ctx.defs td in
     ctx.defs <- td' :: ctx.defs;
@@ -477,11 +555,19 @@ let from_ast_top_level ctx tl = match tl with
   | Ast.TL_ex expr ->
     let expr' = from_ast_expr ctx expr in
     TL_ex expr'
-;;
+  | Ast.TL_m m ->
+    let m' = from_ast_mod ctx m in
+    TL_m m'
 
-let from_ast_mod ctx (m : Ast.mod_t) =
+and from_ast_mod ctx (m : Ast.mod_t) =
+  let p_mod = ctx.current_mod in
+  step_down_cur_mod ctx m;
   let tl' = List.map (from_ast_top_level ctx) m.top in
-  { mod_name = m.mod_name
-  ; top=Array.of_list tl'
-  }
+  let out = 
+    { mod_name = m.mod_name
+    ; top=Array.of_list tl'
+    }
+  in
+  ctx.current_mod <- p_mod;
+  out
 ;;    

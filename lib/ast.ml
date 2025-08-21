@@ -31,6 +31,12 @@ type top_level =
   | TL_td of type_def
   | TL_an of assignment
   | TL_ex of expr
+  | TL_m  of mod_t
+      
+and mod_t = (* TODO mod level deps *)
+  { mod_name : name_atom option
+  ; top : top_level list
+  }
 
 (* TODO module signatures.
  *
@@ -45,14 +51,8 @@ type top_level =
  * Also at least to start have modules w/ signitures not hide internal
  * details, ie you can reference things that aren't in the signature
  * and type internals and stuff, again C style. 
- *)
-      
-type mod_t =
-  { (* TODO mod level deps *)
-    mod_name : name option
-  ; top : top_level list
-  }
-
+*)
+  
 let mod_types m =
   List.filter_map (fun tl ->
       match tl with
@@ -71,6 +71,13 @@ let mod_exprs m =
   List.filter_map (fun tl ->
       match tl with
       | TL_ex at -> some at
+      | _ -> none) m.top
+;;
+
+let mod_submods m = 
+  List.filter_map (fun tl ->
+      match tl with
+      | TL_m m -> some m
       | _ -> none) m.top
 ;;
 
@@ -131,21 +138,18 @@ module PrettyPrint = struct
       "let (" ^ ppb ^ ")\n.\n" ^ ppi
   ;;
 
-  let pp_top_level tl = match tl with
+  let rec pp_top_level tl = match tl with
     | TL_td td -> pp_type_def td
     | TL_an at -> pp_assignment at
     | TL_ex ex -> pp_expr ex
-  ;;
-
-  let pp_mod m =
+    | TL_m m -> pp_mod m
+  and pp_mod m =
     let open Util.OM in
-    let n = m.mod_name >>| pp_name |> Option.value ~default:"[Anonymous]" in
+    let n = m.mod_name >>| pp_name_atom |> Option.value ~default:"[Anonymous]" in
     let prefix = indent_line "{Module " ^ n ^ " :\nExpressions:\n" in
-    (*
-     * let types = pp_lst pp_type_def @@ mod_types m in
-     *)
     let exprs = pp_lst ~sep:"\n" pp_expr @@ mod_exprs m in
     let assigns = pp_lst ~sep:"\n" pp_assignment @@ mod_assigns m in
-    prefix ^ exprs ^ "Assignments:\n" ^ assigns ^ "}"
+    let mods = pp_lst ~sep:"\n" pp_mod @@ mod_submods m in
+    prefix ^ exprs ^ "Assignments:\n" ^ assigns ^ "Submodules:\n" ^ mods ^ "}"
   ;;
 end 

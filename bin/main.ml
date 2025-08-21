@@ -38,7 +38,9 @@ let handle_module () =
   print_endline @@ PrettyPrint.pp_mod ast_m;
   
   let open Ir in
-  let ir_m = from_ast_mod (empty_ctx ()) ast_m in
+  let ctx = empty_ctx () in
+  let () = declare_ahead ctx ast_m in
+  let ir_m = from_ast_mod ctx ast_m in
   print_endline "\nIR:";
   print_endline @@ PrettyPrint.pp_mod ir_m;
   let open Compile.Compiler in

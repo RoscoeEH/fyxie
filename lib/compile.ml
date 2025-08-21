@@ -359,7 +359,7 @@ end = struct
     | _ -> raise @@ Failure "This should get caught by possible_static above"
   ;;
   
-  let compile_top_level tl =
+  let rec compile_top_level tl =
     match tl with
     | TL_td _ -> raise @@ Failure "Typedefs should be resolved before compilation"
     | TL_ex e -> compile e
@@ -367,14 +367,14 @@ end = struct
       let buf = Dynarray.create () in
       let* () = tl_an_rhs_value buf a in
       def_static a.lhs.v_id buf
-  ;;
+    | TL_m m -> compile_mod m
 
-  let compile_mod m =
+  and compile_mod m =
     let seq acc tl = acc >>= fun _ -> compile_top_level tl in
     Array.fold_left seq (return ()) m.top
   ;;
 
-  let static_pass_mod m =
+  let rec static_pass_mod m =
     let helper acc tl =
       match tl with
       | TL_an a ->
@@ -385,6 +385,10 @@ end = struct
         in
         let* x = acc in
         let* () = dec_static ~id ~size in
+        return x
+      | TL_m sm ->
+        let* x = acc in
+        let* () = static_pass_mod sm in
         return x
       | _ -> acc
     in

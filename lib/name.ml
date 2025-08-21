@@ -15,6 +15,8 @@ type name =
   ; term : name_atom
   }
 
+let pp_name_atom n = n
+
 let pp_name n =
   let da = Buffer.create 8 in
   let helper p =
@@ -26,13 +28,20 @@ let pp_name n =
   Buffer.contents da
 ;;
 
-
 let check_upper p =
   if String.length p == 0 then Error "Empty name segment"
   else match String.get p 0 with
     | 'A'..'Z' -> Ok p
     | 'a'..'z' -> error @@ "Name " ^ p ^ " not uppercase"
     | _ -> error @@ "Unexpected char in name " ^ p
+;;
+
+let name_atom_of_string s =
+  let parts = String.split_on_char separator s in
+  match parts with
+  | [] -> Error "Empty name"
+  | [x] -> Ok x
+  | _ -> Error "More than one segment in name atom"
 ;;
 
 let name_of_string s =
@@ -53,7 +62,7 @@ let compare a b =
 
 let add_prefix p n =
   let* p = check_upper p in
-  return { mods = n.mods @ [p] ; term = n.term }
+  return { mods = p::n.mods ; term = n.term }
 ;;
 
 let drop_prefix n =
