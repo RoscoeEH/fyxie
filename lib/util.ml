@@ -67,6 +67,8 @@ module RM = struct
   ;;
   
   let map_err = map_error
+
+  let join x = x >>= fun i -> i
 end
 
 (* Collects Ok values, stops on an Error *)
