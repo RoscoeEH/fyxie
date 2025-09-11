@@ -135,13 +135,31 @@ module Classes = struct
     ; p_over : ty qual list 
     }
 
+  let rec is_acyclic q =
+    (* since q is strictly in its recursion and instantiated,
+     * it must either be finite acyclic or cyclic.
+     * Thus physical inequality is enough to rule out cycles. *)
+    match q.q_constaints with
+    | [] -> true
+    | cs ->
+      let help acc q' =
+        acc && q' != q && is_acyclic q'
+      in
+      let help_p acc c =
+        List.fold_left help acc c.p_over
+      in
+      List.fold_left help_p true cs
+  ;;
+  
+  let make_q h cs =
+    let q = {q_constaints=cs;q_head=h} in
+    if is_acyclic q
+    then q
+    else raise @@ Failure "Qualifed type is cyclic"
+  ;;
+  
   type qty = ty qual
 
-  (* TODO should superclasses be a feature of the class or of the instance?
-   *
-   * It makes sense to include them here, but it's not clear how
-   * to generalize to non-single head constraints
-   * *)
   type class_sig =
     { cs_args : tvar qual
     ; cs_contents : (name * ty) list
@@ -151,12 +169,15 @@ module Classes = struct
     { inst_of : class_sig
     (* orders match signiture, zip to pair them *)
     ; inst_args : qty list
+    ; class_name : name
     ; inst_contents : int list (* TODO should match expr/binding elsewhere *)
     }
 
   type class_t =
-    { class_instances : pred list
-    (* TODO add sig here and force add_class to specify *)
+    { class_instances : instance_body list
+    (* TODO enfoce that all instances match teh class sig, but that
+       match is a structural one, eg kind and arity "skeleton" match,
+       not that the types/tvars match *)
     }
 
   type class_env =
@@ -169,9 +190,7 @@ module Classes = struct
   let rec apply_q s qt =
     let new_constraints = List.map (apply_c s) qt.q_constaints in
     let new_head = apply s qt.q_head in
-    { q_constaints = new_constraints
-    ; q_head = new_head
-    }    
+    make_q new_head new_constraints
   and apply_c s c =
     { p_name = c.p_name
     ; p_over = List.map (apply_q s) c.p_over 
@@ -184,11 +203,20 @@ module Classes = struct
   and tvs_c c = List.concat_map tvs_q c.p_over
 
   (* TODO
-   *
-   * mgu and match over predicates will fail if order
-   * differs in constraints, or if predicates don't match,
-   * even when testing a with b and a entails b. 
-   *)
+  mgu and match over predicates will fail if order differs in
+  constraints, or if predicates don't match, even when testing a with
+  b and a entails b.
+  
+  pred and qual should use sets, but defining a total order over
+  mutually recursive types is complicated. We could maybe do something
+  like make them exist in some sort of arena and then use indecies to
+  order them? But it would be really nice to just traverse them
+  transparently like we can now.
+
+  As always some sort of monad that gives syntax for a fetch/set into
+  an arena could help a bit, but that's a lot of boilerplate that I
+  don't want to deal with right now. Maybe if this was haskell :(
+  *)
   
   let rec most_general_unifier_q qa qb =
     let open Util.RM in
@@ -220,7 +248,7 @@ module Classes = struct
   let initial_ce = { defaults = [] ; classes = [] } (* TODO *)
 
   let defined_ce n ce =
-    List.fold_left (fun acc c -> acc || (fst c = n)) false ce.classes
+    List.exists (fun c -> (fst c = n)) ce.classes
 
   let compose_cet (f: ce_trans) (g: ce_trans) ce = Option.bind (f ce) g
 
@@ -230,22 +258,40 @@ module Classes = struct
     then raise @@ Failure "Missing Prereq class"
     else Option.some @@ modify ce i {class_instances = []}
 
-  (* TODO here too we want a stronger check, since this will report
-   * false negatives for different orders etc *)
-  let inst_overlap p q = Result.is_ok @@ most_general_unifier_c p q
+  let pred_of_inst ib = {p_name=ib.class_name ; p_over=ib.inst_args}
 
-  let add_instance ps pred ce =
-    let i = pred.p_name in
-    let overlaps = List.fold_left (fun acc is -> acc || (inst_overlap pred is)) false ps in
-    if not @@ defined_ce i ce then raise @@ Failure "Instance for undefined class"
-    else if overlaps then raise @@ Failure "No overlapping instances TODO"
-    else
-      let its = List.assoc_opt i ce.classes |> Option.value ~default:{class_instances=[]} in
-      let c = { p_name = i
-              ; p_over = pred.p_over
-              }
+  (* TODO here too we want a stronger check, since this will report
+   * false negatives for different orders etc, see above *)
+  let inst_overlap a b =
+    let a = pred_of_inst a in
+    let b = pred_of_inst b in
+    Result.is_ok @@ most_general_unifier_c a b
+  ;;
+
+  let prereqs ib =
+    let concat_map f l =
+      (* attempt to reduce repeats *)
+      List.fold_left union [] @@ List.map f l
+    in
+    concat_map (fun q -> q.q_constaints) ib.inst_args
+  ;;
+  
+  let add_instance ib ce =
+    let n = ib.class_name in
+    match List.assoc_opt n ce.classes with
+    | None -> raise @@ Failure "Instance for undefined class"
+    | Some c ->
+      let overlaps =
+        List.exists
+          (fun other_inst -> (inst_overlap ib other_inst))
+          c.class_instances
       in
-      modify ce i { class_instances = c::(its.class_instances)}
+      if overlaps
+      then raise @@ Failure
+          "No overlapping instances TODO add context management"
+      else
+        modify ce n { class_instances = ib::(c.class_instances) }
+  ;;
 end
 open Classes
 
@@ -253,15 +299,30 @@ let entail_by_inst ce p =
   let open Util.RM in
   let c = List.assoc p.p_name ce.classes in
   let its = c.class_instances in
-  let helper inst =
-    let* subst = match_c inst p in
-    return @@ List.concat_map (fun qt -> List.map (apply_c subst) qt.q_constaints) inst.p_over
+  let helper (inst : instance_body) =
+    let* subst = match_c (pred_of_inst inst) p in
+    let u_prereqs = prereqs inst |> List.map (apply_c subst) in
+    return (inst, u_prereqs)
   in
-  List.fold_left (fun acc inst -> acc <|> helper inst) (Error "No matching instances") its
+  List.fold_left
+    (fun acc inst -> acc <|> helper inst) (Error "No matching instances")
+    its
 
-let rec entail ce ps p =
-  if List.mem p ps then true
-  else 
-    match entail_by_inst ce p with
-    | Error _ -> false
-    | Ok qs -> List.for_all (entail ce ps) qs
+(*
+ * let rec entail ce known target =
+ *   let test_known p =
+ *     TODO
+ *   in
+ *   let removal =
+ *     List.filter_map (fun )
+ *   in
+ *)
+
+(*
+ * let rec entail ce ps p =
+ *   if List.mem p ps then true
+ *   else 
+ *     match entail_by_inst ce p with
+ *     | Error _ -> false
+ *     | Ok qs -> List.for_all (entail ce ps) qs
+ *)
