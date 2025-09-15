@@ -43,6 +43,9 @@ let handle_module () =
   let ir_m = from_ast_mod ctx ast_m in
   print_endline "\nIR:";
   print_endline @@ PrettyPrint.pp_mod ir_m;
+  let ir_m = match Typecheck.check_mod [] ir_m with
+    | Error e -> raise @@ Failure e
+    | Ok (_tbinds, m) -> m in
   let open Compile.Compiler in
   let c_action = then_stop (Compile.Tracker.bind (static_pass_mod ir_m) (fun _ -> compile_mod ir_m)) in
   let statics, ops = run_empty ~static_offset:0 c_action in

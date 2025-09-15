@@ -100,3 +100,25 @@ and check_assignment tbinds assign =
   let* tp = type_eq assign.lhs.v_tp rhs'.tp in
   let lhs' = {v_name=lhs.v_name; v_tp=tp; v_domain=lhs.v_domain; v_id=lhs.v_id} in
   return {lhs=lhs'; rhs=rhs'}
+
+let rec check_top_level tbinds tl =
+  match tl with
+  | TL_td _td -> return (tbinds, tl)
+  | TL_an an -> check_assignment tbinds an >>| fun an ->
+    let b = (an.lhs.v_id, an.rhs.tp) in
+    (b::tbinds, TL_an an)
+  | TL_ex e -> check_expr tbinds e >>| fun x ->
+    (tbinds, TL_ex x)
+  | TL_m m -> check_mod tbinds m >>|
+    fun (tbinds, x) -> (tbinds, TL_m x)
+and check_mod tbinds m =
+  let helper acc tl =
+    let r = check_top_level acc tl in
+    match r with
+    | Error e -> (acc, Error e)
+    | Ok (acc, r) -> (acc, Ok r)
+  in
+  let (tbinds, top'_r) = 
+    Array.fold_left_map helper tbinds m.top in
+  let* top' = Util.sequence_arr top'_r in
+  return (tbinds, {mod_name=m.mod_name; top=top'})
