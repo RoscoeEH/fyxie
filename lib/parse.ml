@@ -6,6 +6,8 @@ open Result
 open Ast
 open Name
 
+open Types.Builtins
+
 (* Converts strings to concrete tokens *)
 module Lex : sig
   type token =
@@ -327,17 +329,16 @@ module Parse = struct
   ;;
 
   let rec parse_type ctx =
-    let base = literal (Symbol "Int") >> return Int_t in
+    let base = literal (Symbol "Int") >> return int_t in
     let func =
       in_parens
         (let* types = many parse_type >>| List.rev in
          match types with
-         | final :: (_penult :: _rest as args) ->
-           return @@ Fun_t (Array.of_list @@ List.rev args, final)
+         | _final :: (_penult :: _rest) ->
+           return @@ Typecheck.roll_ftp types
          | _ -> fail "Function type with only one element")
     in
-    let alias = parse_name >>| fun s -> Alias_t s in
-    ctx |> (base <|> func <|> alias)
+    ctx |> (base <|> func)
   ;;
 
   let parse_binding =

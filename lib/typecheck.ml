@@ -1,0 +1,102 @@
+
+open Types.Basic
+open Types.Builtins
+
+open Ir
+
+open Util.RM
+type 'a r = ('a, string) Result.t
+
+let fail_msg str = Error str
+
+let type_eq a b = match_s a b >>| fun s -> apply s a
+
+let rec unroll_ftp t =
+  match t with
+  | Ta (b, Ta (arrow, a)) ->
+    if arrow != arrow_t
+    then return [t]
+    else
+      let* rest = unroll_ftp b in
+      return @@ a :: rest
+  | _ -> return [t]
+
+(* expects reversed list *)
+let roll_ftp tps =
+  let rec helper tps acc =
+    match tps with
+    | [] -> acc
+    | a::rs ->
+      let acc = Ta (a, Ta (arrow_t, acc)) in
+      helper rs acc
+  in
+  match tps with
+  | [] -> raise @@ Failure "Can't roll empty list into function type"
+  | a::rs ->
+    helper rs a
+
+let rec check_expr tbinds expr =
+  match expr.inner with
+  | Fun f ->
+    let* caps' = Util.sequence_arr @@
+      Array.map (fun v -> check_expr tbinds {tp=v.v_tp;inner=Var v}) f.captures in
+    let caps' = Array.map
+        (fun e ->
+           match e.inner with
+           | Var v -> v
+           | _ -> raise @@ Failure "")
+        caps' in
+    let f_ext = Array.map (fun v -> (v.v_id, v.v_tp)) f.f_args in
+    let c_ext = Array.map (fun v -> (v.v_id, v.v_tp)) caps' in
+    let extension = Array.to_list @@ Array.append f_ext c_ext in
+    let* body' = check_expr (extension @ tbinds) f.f_body in
+    let func' = {f_args=f.f_args; captures=caps'; f_body=body'} in
+    let* ret_tp = unroll_ftp expr.tp >>|
+      List.drop (Array.length f.f_args) >>| List.rev >>|
+      List.hd
+    in
+    let* ret_tp = type_eq ret_tp body'.tp in 
+    let arg_tps = List.rev @@ Array.to_list @@ Array.map (fun v -> v.v_tp) f.f_args in
+    let f_tp = roll_ftp @@ arg_tps @ [ret_tp] in
+    return {tp=f_tp; inner=Fun func'}
+  | App a ->
+    let* func' = check_expr tbinds a.func in
+    let* args' = Util.sequence_arr @@
+      Array.map (check_expr tbinds) a.a_args in
+    let* arg_types = unroll_ftp func'.tp >>| Array.of_list in
+    let helper a tp =
+      let* tp = type_eq a.tp tp in
+      return {tp=tp; inner=a.inner}
+    in
+    let* args'' = Util.sequence_arr @@
+      Array.map2 helper args' arg_types in
+    let* tp =
+      unroll_ftp func'.tp >>|
+      List.drop (Array.length args') >>| List.rev >>|
+      roll_ftp in
+    return {tp=tp; inner=App {func=func'; a_args=args''}}
+  | Let lb ->
+    let* binds' = Util.sequence_arr @@
+      Array.map (check_assignment tbinds) lb.binds in
+    let extension = Array.to_list @@ Array.map
+        (fun asn -> (asn.lhs.v_id, asn.lhs.v_tp))
+        lb.binds in
+    let* body' = check_expr (extension @ tbinds) lb.l_body in
+    let lb' = {binds=binds'; l_body=body'} in
+    return {tp=body'.tp; inner=Let lb'}
+  | Var v ->
+    begin match List.assoc_opt v.v_id tbinds with
+      | Some def_t ->
+        let* tp = type_eq v.v_tp def_t in
+        return {tp=tp; inner=Var v}
+      | None -> raise @@ Failure "Variable id not in type scope?"
+    end
+  | Lit _l ->
+    let* tp = type_eq expr.tp int_t in
+    return {tp=tp; inner=expr.inner}
+and check_assignment tbinds assign =
+  let* rhs' = check_expr tbinds assign.rhs in
+  let lhs = assign.lhs in
+  let* tp = type_eq assign.lhs.v_tp rhs'.tp in
+  let lhs' = {v_name=lhs.v_name; v_tp=tp; v_domain=lhs.v_domain; v_id=lhs.v_id} in
+  return {lhs=lhs'; rhs=rhs'}

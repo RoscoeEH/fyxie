@@ -3,10 +3,7 @@ open Option
     
 open Name
 
-type type_t =
-  | Int_t
-  | Fun_t of type_t array * type_t
-  | Alias_t of name
+type type_t = Types.Basic.ty    (* kind star *)
 
 type binding = name * type_t
 
@@ -94,21 +91,7 @@ let rec fetch_nearest_alias s ms =
 
 module PrettyPrint = struct
   open Util.Pretty
-  let rec pp_type ?(mods = []) t =
-    match t with
-    | Int_t -> "Int"
-    | Fun_t (args, result) ->
-      "("
-      ^ pp_arr pp_type args
-      ^ pp_type result
-      ^ ")"
-    | Alias_t s ->
-      let b = fetch_nearest_alias s mods in
-      let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
-      (match b with
-       | None -> prefix ^ "nothing }"
-       | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
-  ;;
+  let pp_type = Types.PrettyPrint.pp_type
 
   let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
 

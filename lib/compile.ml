@@ -248,13 +248,15 @@ end = struct
     match v.v_domain with
     | Static ->
       let* offset, size = ref_static v.v_id in
-      begin match v.v_tp with
+      begin match Types.stack_size v.v_tp with
         (* TODO terrible hack, we need a better way to represent if
            something is a boxed val (pointer to heap/static) or an
            unboxed value. *)
-        | Fun_t (_, _) -> return @@ push_lit ~is_ptr:true offset
-        | _ ->
-          if size <> 1
+        | None -> return @@ push_lit ~is_ptr:true offset
+        | Some n ->
+          if size <> n
+          then raise @@ Failure "Type and static disagree in size"
+          else if size <> 1 
           then raise @@ Failure "Static fetchs of >1 size not supported"
           else return @@ fetch_size offset 1
       end 
@@ -379,9 +381,10 @@ end = struct
       match tl with
       | TL_an a ->
         let id = a.lhs.v_id in
-        let size = match a.lhs.v_tp with
-          | Fun_t (_,_) -> 2
-          | _ -> 1
+        let size =
+          if Types.is_function a.lhs.v_tp
+          then 2
+          else 1
         in
         let* x = acc in
         let* () = dec_static ~id ~size in

@@ -1,4 +1,4 @@
 (library
  (name fyxie)
  (wrapped false)
- (modules concrete name parse ast ir bytecode interpret compile util types))
+ (modules concrete name parse ast ir typecheck bytecode interpret compile util types))

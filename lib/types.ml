@@ -19,7 +19,6 @@ module Helpers = struct
 end
 open Helpers
 
-
 (** Module for the basic type details.
  *
  * Contains Types, Type variables, Kinds, Substiutions, and some basic helpers.
@@ -116,7 +115,18 @@ module Basic = struct
 end
 open Basic
 
-
+(** Module for builtins
+ *)
+module Builtins = struct
+  let unit_t : ty = Tc (Result.get_ok @@ Name.name_of_string "Unit", Star)
+  let int_t : ty = Tc (Result.get_ok @@ Name.name_of_string "Int", Star)
+  let arrow_t : ty = Tc (Result.get_ok @@ Name.name_of_string "->", Kf (Star, (Kf (Star, Star))))
+      
+end
+(*
+ * open Builtins
+ *)
+    
 (** Module for classes and instance.
  *
  * TODO contents
@@ -295,6 +305,25 @@ module Classes = struct
 end
 open Classes
 
+(** Module for making strings
+*)
+module PrettyPrint = struct
+  let rec pp_kind k =
+    match k with
+    | Star -> "*"
+    | Kf (a,b) -> pp_kind a ^ " -> " ^ pp_kind b
+  ;;
+    
+  let rec pp_type ?(_mods=[]) t =
+    match t with
+    | Tc (n,k) ->
+      pp_name n ^ "{kind " ^ pp_kind k ^ "}"
+    | Ta (a,b) ->
+      "{app " ^ pp_type a ^ " to " ^pp_type b ^"}"
+    | _ -> raise @@ Failure "More complicated types"
+  ;;
+end
+
 let entail_by_inst ce p =
   let open Util.RM in
   let c = List.assoc p.p_name ce.classes in
@@ -326,3 +355,23 @@ let entail_by_inst ce p =
  *     | Error _ -> false
  *     | Ok qs -> List.for_all (entail ce ps) qs
  *)
+
+
+
+
+let is_function t =
+  match t with
+  | Ta (_b,Ta (arrow, _a)) ->
+    if arrow == Builtins.arrow_t
+    then true
+    else false
+  | _ -> false
+
+(* returns None for boxed pointer, Some(n) for an unboxed value of n slots *)
+let stack_size t =
+  match t with
+  | Ta (_b,Ta (arrow, _a)) ->
+    if arrow == Builtins.arrow_t
+    then None
+    else raise @@ Failure "Unknown type application size"
+  | _ -> Some 1

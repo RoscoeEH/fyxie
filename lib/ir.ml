@@ -5,19 +5,14 @@ open List
 open Array
 
 open Name
+open Types.Basic
 
-type type_t =
-  | Int_t
-  | Fun_t of type_t array * type_t
-  | Alias_t of name
-  (* TODO remove/resolve all type synonyms here, so that all
-     downstream sections just have types that look like values. Maybe
-     include them as a separate field to give nice error messages? *)
+type type_t = Types.Basic.ty         (* limit to kind star *)
 
 type type_def =
   { lhs_t : name
   ; rhs_t : type_t
-  }
+  } 
 
 type domain =
   | Static
@@ -30,30 +25,32 @@ type variable =
   ; v_tp : type_t
   ; v_domain : domain
   ; v_id : int
-  }
+  } 
 
 type assignment =
   { lhs : variable
   ; rhs : expr
-  }
+  } 
 
 and func =
   { f_args : variable Array.t
   ; captures : variable Array.t
   ; f_body : expr
-  }
+  } 
 
 and let_block =
   { binds : assignment Array.t
   ; l_body : expr
-  }
+  } 
 
 and application =
   { func : expr
   ; a_args : expr Array.t
-  }
+  } 
 
-and literal = { value : int }
+and literal =
+  { value : int
+  } 
 
 and content =
   | Fun of func
@@ -65,7 +62,7 @@ and content =
 and expr =
   { tp : type_t
   ; inner : content
-  }
+  } 
 
 type top_level =
   | TL_td of type_def
@@ -76,7 +73,7 @@ type top_level =
 and mod_t =
   { mod_name : name_atom option
   ; top : top_level Array.t
-  }
+  } 
 
 let mod_types m =
   List.filter_map (fun tl ->
@@ -112,24 +109,30 @@ let rec fetch_nearest_alias s ms =
 
 module PrettyPrint = struct
   open Util.Pretty
+  include Types.PrettyPrint
+            
   let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
 
-  let rec pp_type ?(mods=[]) t =
-    match t with
-    | Int_t -> "Int"
-    | Fun_t (args, result) ->
-      "("
-      ^ pp_arr pp_type args
-      ^ "-> " 
-      ^ pp_type result
-      ^ ")"
-    | Alias_t s ->
-      let b = fetch_nearest_alias s mods in
-      let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
-      (match b with
-       | None -> prefix ^ "nothing }"
-       | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
-  ;;
+  let pp_type = Types.PrettyPrint.pp_type 
+  
+  (*
+   * let rec pp_type ?(mods=[]) t =
+   *   match t with
+   *   | Int_t -> "Int"
+   *   | Fun_t (args, result) ->
+   *     "("
+   *     ^ pp_arr pp_type args
+   *     ^ "-> " 
+   *     ^ pp_type result
+   *     ^ ")"
+   *   | Alias_t s ->
+   *     let b = fetch_nearest_alias s mods in
+   *     let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
+   *     (match b with
+   *      | None -> prefix ^ "nothing }"
+   *      | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
+   * ;;
+   *)
 
   let pp_domain d = match d with
     | Static -> "static"
@@ -201,41 +204,9 @@ module PrettyPrint = struct
   ;;
     
 end
-open PrettyPrint
-
-let unify_types ?(defs = []) a b =
-  (* just a better eq check atm, more later *)
-  let open Util.RM in
-  let rec ut1 a b =
-    match (a,b) with
-    | (Int_t, Int_t) -> ok a
-    | (Fun_t (aa, ar), Fun_t (ba, br)) ->
-      let arg_ms' = Array.map2 ut1 aa ba in
-      (let* args' = Util.sequence_arr arg_ms' in
-       let* r' = ut1 ar br in
-       return @@ Fun_t (args', r'))
-      |> Result.map_error (fun e ->
-          "When unifying "
-          ^ pp_type a
-          ^ "\nand\n"
-          ^ pp_type b
-          ^ "\nencountered\n"
-          ^ e)
-    | (Alias_t an, Alias_t bn) ->
-      (match fetch_alias an defs with
-       | None -> error (pp_name an ^ " Undefined")
-       | Some a' -> (match fetch_alias bn defs with
-           | None -> error (pp_name bn ^ " Undefined")
-           | Some b' -> ut1 a'.rhs_t b'.rhs_t))
-    | (_,_) ->
-      error ("Types\n"
-             ^ pp_type a
-             ^ "\nand\n"
-             ^ pp_type b
-             ^ "don't match")
-  in
-  ut1 a b
-;;
+(*
+ * open PrettyPrint
+ *)
 
 let collect_captures args body =
   let captures = ref [] in
@@ -300,16 +271,9 @@ let rec refs_allow_static ?(ignore=[]) body =
     refs_allow_static ~ignore a.func && Array.for_all (refs_allow_static ~ignore) a.a_args
 ;;
 
-let rec from_ast_type ?(defs=[]) at =
-  match at with
-  | Ast.Int_t -> Int_t
-  | Ast.Fun_t (args, ret) ->
-    let args' = Array.map (fun a -> from_ast_type ~defs a) args in
-    Fun_t (args', from_ast_type ~defs ret)
-  | Ast.Alias_t n ->
-    match List.find_opt (fun td -> td.lhs_t = n) defs with
-    | Some td -> td.rhs_t
-    | None -> raise @@ Failure ("Type alias " ^ pp_name n ^ " not defined")
+let from_ast_type ?(defs=[]) t =
+  let _ = defs in
+  t
 ;;
 
 let from_ast_type_def ?(defs=[]) (td : Ast.type_def) =
@@ -428,46 +392,26 @@ let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
   match lookup ctx n with
   | None -> 
     let var = insert ctx n tp' domain in
-    begin match unify_types ~defs:ctx.defs expr'.tp tp' with
-    | Error e -> raise @@ Failure e
-    | Ok _u_tp' -> {lhs=var; rhs=expr'}
-    end
+    {lhs=var; rhs=expr'}
   | Some var ->
-    let open Util.RM in
-    let an_type_match = unify_types ~defs:ctx.defs expr'.tp tp' in
-    let v_dec_match =
-      if var.v_domain = Static && domain <> Static
-      then Ok(tp')
-      else (unify_types ~defs:ctx.defs var.v_tp tp')
-    in
-    begin match an_type_match, v_dec_match with
-      | Error e, _ | _, Error e -> raise @@ Failure e
-      | _ -> {lhs=var; rhs=expr'}
-    end
+    {lhs=var; rhs=expr'}
 
 and from_ast_expr ctx (expr : Ast.expr) = match expr with
-  | Lit i -> {tp=Int_t; inner=Lit {value=i}}
+  | Lit i -> {tp=Types.Builtins.int_t; inner=Lit {value=i}}
   | App (func, args) ->
     let func' = from_ast_expr ctx func in
     let args' = List.map (from_ast_expr ctx) args in
-    let (fa_tp, ret_tp) = match func'.tp with
-      | Fun_t (i, o) -> (i, o)
-      | _ -> raise @@
-        Failure ("Non-func type in application: " ^ pp_type func'.tp)
+    let rec helper f_tp args =
+      let open Types.Builtins in
+      match f_tp,args with
+      | ret_t,[] -> ret_t
+      | Ta (Ta (app, _), f_rest), _::a_rest -> if app == arrow_t
+        then helper f_rest a_rest
+        else raise @@ Failure "Non-arrow type applied during function application"
+      | _,_a::_a_rest -> raise @@ Failure "Too many arguments in application"
     in
-    let a_tps = Array.of_list @@ List.map (fun a -> a.tp) args' in
-    (match Util.sequence_arr
-             (Array.map2 (unify_types ~defs:ctx.defs) fa_tp a_tps)
-     with
-     | Ok _arg_tps ->
-       {tp = ret_tp; inner= App {func=func'; a_args=Array.of_list args'}}
-     | Error e ->
-       raise @@ Failure (
-         "When applying function\n"
-         ^ pp_expr func'
-         ^ "\ntype error:\n"
-         ^ e
-         ^ " Occured"))
+    let ret_tp = helper func'.tp args' in
+    {tp = ret_tp; inner= App {func=func'; a_args=Array.of_list args'}}
   | Var n -> (match lookup ctx n with
       | Some v -> {tp=v.v_tp; inner=Var v}
       | None -> raise @@ Failure ("Name " ^ pp_name n ^ "not defined"))
@@ -501,7 +445,10 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     let args' = List.map lift_arg args in
     let body' = mark_as_captured cap_vars_i @@ from_ast_expr ctx body in
     let a_tps = Array.of_list @@ List.map (fun v -> v.v_tp) args' in
-    let f_tp = Fun_t (a_tps, body'.tp) in
+    let f_tp =
+      let open Types.Builtins in
+      Array.fold_right (fun t acc -> (Ta (Ta (arrow_t, t), acc))) a_tps body'.tp
+    in
     let _ = restore ~dst:ctx ~src:prior_ctx in
     { tp=f_tp
     ; inner=Fun { f_args=Array.of_list args'
