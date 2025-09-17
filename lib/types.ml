@@ -115,17 +115,56 @@ module Basic = struct
 end
 open Basic
 
+(** Module for making strings
+*)
+module PrettyPrint = struct
+  let rec pp_kind k =
+    match k with
+    | Star -> "*"
+    | Kf (a,b) -> pp_kind a ^ " -> " ^ pp_kind b
+  ;;
+
+  let rec pp_type ?(_mods=[]) t =
+    match t with
+    | Tc (n,k) ->
+      pp_name n ^ "{kind " ^ pp_kind k ^ "}"
+    | Ta (a,b) ->
+      "{app " ^ pp_type a ^ " to " ^pp_type b ^"}"
+    | _ -> raise @@ Failure "More complicated types"
+  ;;
+end
+open PrettyPrint
+
 (** Module for builtins
  *)
 module Builtins = struct
   let unit_t : ty = Tc (Result.get_ok @@ Name.name_of_string "Unit", Star)
   let int_t : ty = Tc (Result.get_ok @@ Name.name_of_string "Int", Star)
   let arrow_t : ty = Tc (Result.get_ok @@ Name.name_of_string "->", Kf (Star, (Kf (Star, Star))))
-      
+
+  open Util.RM
+  
+  let as_function t =
+    match t with
+    | Ta (Ta (arrow, a), b) ->
+      if arrow == arrow_t
+      then return (a,b)
+      else Error (pp_type t ^ " not a function type")
+    | _ -> Error (pp_type t ^ " not a function type")
+
+  let mk_function a b = Ta (b, (Ta (arrow_t, a)))
+  
+  let rec eq_exact a b =
+    match (a,b) with
+    | Tc _, Tc _ -> a == b
+    | Tg i, Tg j -> i == j
+    | Tv v, Tv w -> v == w
+    | Ta (a1,a2), Ta (b1,b2) -> eq_exact a1 b1 && eq_exact a2 b2
+    | _,_ -> false
+
+  let unify a b = match_s a b >>| fun s -> apply s a
 end
-(*
- * open Builtins
- *)
+open Builtins
     
 (** Module for classes and instance.
  *
@@ -305,37 +344,21 @@ module Classes = struct
 end
 open Classes
 
-(** Module for making strings
-*)
-module PrettyPrint = struct
-  let rec pp_kind k =
-    match k with
-    | Star -> "*"
-    | Kf (a,b) -> pp_kind a ^ " -> " ^ pp_kind b
-  ;;
-    
-  let rec pp_type ?(_mods=[]) t =
-    match t with
-    | Tc (n,k) ->
-      pp_name n ^ "{kind " ^ pp_kind k ^ "}"
-    | Ta (a,b) ->
-      "{app " ^ pp_type a ^ " to " ^pp_type b ^"}"
-    | _ -> raise @@ Failure "More complicated types"
-  ;;
-end
-
-let entail_by_inst ce p =
-  let open Util.RM in
-  let c = List.assoc p.p_name ce.classes in
-  let its = c.class_instances in
-  let helper (inst : instance_body) =
-    let* subst = match_c (pred_of_inst inst) p in
-    let u_prereqs = prereqs inst |> List.map (apply_c subst) in
-    return (inst, u_prereqs)
-  in
-  List.fold_left
-    (fun acc inst -> acc <|> helper inst) (Error "No matching instances")
-    its
+(** Module for instance resolution
+ *)
+module Resolve = struct 
+  let entail_by_inst ce p =
+    let open Util.RM in
+    let c = List.assoc p.p_name ce.classes in
+    let its = c.class_instances in
+    let helper (inst : instance_body) =
+      let* subst = match_c (pred_of_inst inst) p in
+      let u_prereqs = prereqs inst |> List.map (apply_c subst) in
+      return (inst, u_prereqs)
+    in
+    List.fold_left
+      (fun acc inst -> acc <|> helper inst) (Error "No matching instances")
+      its
 
 (*
  * let rec entail ce known target =
@@ -355,23 +378,10 @@ let entail_by_inst ce p =
  *     | Error _ -> false
  *     | Ok qs -> List.for_all (entail ce ps) qs
  *)
-
-
-
-
-let is_function t =
-  match t with
-  | Ta (_b,Ta (arrow, _a)) ->
-    if arrow == Builtins.arrow_t
-    then true
-    else false
-  | _ -> false
+end
 
 (* returns None for boxed pointer, Some(n) for an unboxed value of n slots *)
 let stack_size t =
-  match t with
-  | Ta (_b,Ta (arrow, _a)) ->
-    if arrow == Builtins.arrow_t
-    then None
-    else raise @@ Failure "Unknown type application size"
-  | _ -> Some 1
+  match as_function t with
+  | Ok _ -> None
+  | Error _ -> Some (1)

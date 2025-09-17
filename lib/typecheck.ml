@@ -1,5 +1,4 @@
 
-open Types.Basic
 open Types.Builtins
 
 open Ir
@@ -9,31 +8,20 @@ type 'a r = ('a, string) Result.t
 
 let fail_msg str = Error str
 
-let type_eq a b = match_s a b >>| fun s -> apply s a
-
 let rec unroll_ftp t =
-  match t with
-  | Ta (b, Ta (arrow, a)) ->
-    if arrow != arrow_t
-    then return [t]
-    else
-      let* rest = unroll_ftp b in
-      return @@ a :: rest
-  | _ -> return [t]
+  match as_function t with
+  | Ok (a,b) ->
+    unroll_ftp b >>| fun rs -> a::rs
+  | Error _e ->
+    return [t]
 
-(* expects reversed list *)
-let roll_ftp tps =
-  let rec helper tps acc =
-    match tps with
-    | [] -> acc
-    | a::rs ->
-      let acc = Ta (a, Ta (arrow_t, acc)) in
-      helper rs acc
-  in
+
+let roll_ftp tps = (* expects reversed list *)
   match tps with
   | [] -> raise @@ Failure "Can't roll empty list into function type"
   | a::rs ->
-    helper rs a
+    List.fold_left (fun acc t ->
+        mk_function t acc) a rs
 
 let rec check_expr tbinds expr =
   match expr.inner with
@@ -55,7 +43,7 @@ let rec check_expr tbinds expr =
       List.drop (Array.length f.f_args) >>| List.rev >>|
       List.hd
     in
-    let* ret_tp = type_eq ret_tp body'.tp in 
+    let* ret_tp = unify ret_tp body'.tp in 
     let arg_tps = List.rev @@ Array.to_list @@ Array.map (fun v -> v.v_tp) f.f_args in
     let f_tp = roll_ftp @@ arg_tps @ [ret_tp] in
     return {tp=f_tp; inner=Fun func'}
@@ -65,7 +53,7 @@ let rec check_expr tbinds expr =
       Array.map (check_expr tbinds) a.a_args in
     let* arg_types = unroll_ftp func'.tp >>| Array.of_list in
     let helper a tp =
-      let* tp = type_eq a.tp tp in
+      let* tp = unify a.tp tp in
       return {tp=tp; inner=a.inner}
     in
     let* args'' = Util.sequence_arr @@
@@ -87,17 +75,17 @@ let rec check_expr tbinds expr =
   | Var v ->
     begin match List.assoc_opt v.v_id tbinds with
       | Some def_t ->
-        let* tp = type_eq v.v_tp def_t in
+        let* tp = unify v.v_tp def_t in
         return {tp=tp; inner=Var v}
       | None -> raise @@ Failure "Variable id not in type scope?"
     end
   | Lit _l ->
-    let* tp = type_eq expr.tp int_t in
+    let* tp = unify expr.tp int_t in
     return {tp=tp; inner=expr.inner}
 and check_assignment tbinds assign =
   let* rhs' = check_expr tbinds assign.rhs in
   let lhs = assign.lhs in
-  let* tp = type_eq assign.lhs.v_tp rhs'.tp in
+  let* tp = unify assign.lhs.v_tp rhs'.tp in
   let lhs' = {v_name=lhs.v_name; v_tp=tp; v_domain=lhs.v_domain; v_id=lhs.v_id} in
   return {lhs=lhs'; rhs=rhs'}
 

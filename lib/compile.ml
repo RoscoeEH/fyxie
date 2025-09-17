@@ -381,11 +381,7 @@ end = struct
       match tl with
       | TL_an a ->
         let id = a.lhs.v_id in
-        let size =
-          if Types.is_function a.lhs.v_tp
-          then 2
-          else 1
-        in
+        let size = Types.stack_size a.lhs.v_tp |> Option.value ~default:1 in
         let* x = acc in
         let* () = dec_static ~id ~size in
         return x
