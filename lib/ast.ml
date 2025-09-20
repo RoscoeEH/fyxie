@@ -12,11 +12,6 @@ type assignment =
   ; rhs : expr
   }
 
-and type_def =
-  { lhs_t : name
-  ; rhs_t : type_t
-  }
-
 and expr =
   | Fun of binding list * expr
   | Let of assignment list * expr
@@ -25,7 +20,6 @@ and expr =
   | Lit of int
 
 type top_level =
-  | TL_td of type_def
   | TL_an of assignment
   | TL_ex of expr
   | TL_m  of mod_t
@@ -49,13 +43,6 @@ and mod_t = (* TODO mod level deps *)
  * details, ie you can reference things that aren't in the signature
  * and type internals and stuff, again C style. 
 *)
-  
-let mod_types m =
-  List.filter_map (fun tl ->
-      match tl with
-      | TL_td td -> some td
-      | _ -> none) m.top
-;;
 
 let mod_assigns m = 
   List.filter_map (fun tl ->
@@ -78,22 +65,9 @@ let mod_submods m =
       | _ -> none) m.top
 ;;
 
-let fetch_alias s m = List.find_opt (fun td -> td.lhs_t = s) @@ mod_types m
-
-let rec fetch_nearest_alias s ms =
-  match ms with
-  | [] -> None
-  | m :: rest ->
-    (match fetch_alias s m with
-     | Some v -> Some v
-     | None -> fetch_nearest_alias s rest)
-;;
-
 module PrettyPrint = struct
   open Util.Pretty
   let pp_type = Types.PrettyPrint.pp_type
-
-  let pp_type_def td = pp_name td.lhs_t ^ " := " ^ pp_type td.rhs_t
 
   let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
 
@@ -122,7 +96,6 @@ module PrettyPrint = struct
   ;;
 
   let rec pp_top_level tl = match tl with
-    | TL_td td -> pp_type_def td
     | TL_an at -> pp_assignment at
     | TL_ex ex -> pp_expr ex
     | TL_m m -> pp_mod m

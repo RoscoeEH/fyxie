@@ -9,11 +9,6 @@ open Types.Basic
 
 type type_t = Types.Basic.ty         (* limit to kind star *)
 
-type type_def =
-  { lhs_t : name
-  ; rhs_t : type_t
-  } 
-
 type domain =
   | Static
   | Local
@@ -65,7 +60,6 @@ and expr =
   } 
 
 type top_level =
-  | TL_td of type_def
   | TL_an of assignment
   | TL_ex of expr
   | TL_m of mod_t
@@ -74,13 +68,6 @@ and mod_t =
   { mod_name : name_atom option
   ; top : top_level Array.t
   } 
-
-let mod_types m =
-  List.filter_map (fun tl ->
-      match tl with
-      | TL_td td -> some td
-      | _ -> none) @@ to_list m.top
-;;
 
 let mod_assigns m =
   List.filter_map (fun tl ->
@@ -96,17 +83,6 @@ let mod_submods m =
       | _ -> none) @@ to_list m.top
 ;;
 
-
-let fetch_alias s defs = List.find_opt (fun td -> td.lhs_t = s) defs
-
-let rec fetch_nearest_alias s ms =
-  match ms with
-  | [] -> None
-  | m::rest -> (match fetch_alias s @@ mod_types m with
-    | Some v -> Some v
-    | None -> fetch_nearest_alias s rest)
-;;
-
 module PrettyPrint = struct
   open Util.Pretty
   include Types.PrettyPrint
@@ -115,25 +91,6 @@ module PrettyPrint = struct
 
   let pp_type = Types.PrettyPrint.pp_type 
   
-  (*
-   * let rec pp_type ?(mods=[]) t =
-   *   match t with
-   *   | Int_t -> "Int"
-   *   | Fun_t (args, result) ->
-   *     "("
-   *     ^ pp_arr pp_type args
-   *     ^ "-> " 
-   *     ^ pp_type result
-   *     ^ ")"
-   *   | Alias_t s ->
-   *     let b = fetch_nearest_alias s mods in
-   *     let prefix = "{ Alias : " ^ pp_name s ^ " bound to " in
-   *     (match b with
-   *      | None -> prefix ^ "nothing }"
-   *      | Some td -> prefix ^ pp_type ~mods:mods td.rhs_t ^ "}")
-   * ;;
-   *)
-
   let pp_domain d = match d with
     | Static -> "static"
     | Local -> "local"
@@ -192,7 +149,9 @@ module PrettyPrint = struct
     | TL_an a -> pp_assignment a
     | TL_ex e -> pp_expr e
     | TL_m m -> pp_mod m
-    | _ -> raise @@ Failure "top level td not supported"
+    (*
+     * | _ -> raise @@ Failure "top level td not supported"
+     *)
 
   and pp_mod m =
     let open Util.OM in
@@ -271,18 +230,16 @@ let rec refs_allow_static ?(ignore=[]) body =
     refs_allow_static ~ignore a.func && Array.for_all (refs_allow_static ~ignore) a.a_args
 ;;
 
-let from_ast_type ?(defs=[]) t =
-  let _ = defs in
-  t
-;;
+let from_ast_type t = t ;;
 
-let from_ast_type_def ?(defs=[]) (td : Ast.type_def) =
- {lhs_t=td.lhs_t; rhs_t=from_ast_type ~defs td.rhs_t}
-;;
+(*
+ * let from_ast_type_def ?(defs=[]) (td : Ast.type_def) =
+ *  {lhs_t=td.lhs_t; rhs_t=from_ast_type ~defs td.rhs_t}
+ * ;;
+ *)
 
 type ctx =
-  { mutable defs            : type_def list
-  ; mutable statics         : variable list
+  { mutable statics         : variable list
   ; mutable static_next_id  : int
   ; mutable locals          : variable list
   ; mutable local_next_id   : int
@@ -293,8 +250,7 @@ type ctx =
   ; mutable current_mod     : name_atom list
   }
 
-let empty_ctx () = { defs            = []
-                   ; statics         = []
+let empty_ctx () = { statics         = []
                    ; static_next_id  = 0
                    ; locals          = []
                    ; local_next_id   = 0 
@@ -307,8 +263,7 @@ let empty_ctx () = { defs            = []
 
 let save ctx =
   (* TODO surely there is a better way for a deep copy? *)
-  { defs            = ctx.defs
-  ; statics         = ctx.statics
+  { statics         = ctx.statics
   ; static_next_id  = ctx.static_next_id
   ; locals          = ctx.locals
   ; local_next_id   = ctx.local_next_id
@@ -322,7 +277,6 @@ let save ctx =
 
 let restore ~dst ~src =
   (* TODO again this sucks *)
-  dst.defs            <- src.defs           ;
   dst.statics         <- src.statics        ;
   dst.static_next_id  <- src.static_next_id ;
   dst.locals          <- src.locals         ;
@@ -387,7 +341,7 @@ let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
   (* Mutates ctx to include the assignment in the given domain *)
   let (n,tp) = an.lhs in
   let expr = an.rhs in
-  let tp' = from_ast_type ~defs:ctx.defs tp in
+  let tp' = from_ast_type tp in
   let expr' = from_ast_expr ctx expr in
   match lookup ctx n with
   | None -> 
@@ -440,7 +394,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     ctx.locals <- [];
     ctx.local_next_id <- 0;
     let lift_arg (n,tp) =
-      insert ctx n (from_ast_type ~defs:ctx.defs tp) Arg
+      insert ctx n (from_ast_type tp) Arg
     in
     let args' = List.map lift_arg args in
     let body' = mark_as_captured cap_vars_i @@ from_ast_expr ctx body in
@@ -459,7 +413,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
 let tl_assign ~domain ~ctx (an : Ast.assignment) =
   (* Mutates ctx to define the name in the given domain *)
   let (n,tp) = an.lhs in
-  let tp' = from_ast_type ~defs:ctx.defs tp in
+  let tp' = from_ast_type tp in
   let _ = insert ctx n tp' domain in
   ()
 ;;
@@ -491,10 +445,6 @@ let declare_ahead ctx (m : Ast.mod_t) =
 ;;
 
 let rec from_ast_top_level ctx tl = match tl with
-  | Ast.TL_td td ->
-    let td' = from_ast_type_def ~defs:ctx.defs td in
-    ctx.defs <- td' :: ctx.defs;
-    TL_td td'
   | Ast.TL_an an ->
     let an' = from_ast_assign ~domain:Static ~ctx an in
     TL_an an'

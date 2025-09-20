@@ -363,7 +363,6 @@ end = struct
   
   let rec compile_top_level tl =
     match tl with
-    | TL_td _ -> raise @@ Failure "Typedefs should be resolved before compilation"
     | TL_ex e -> compile e
     | TL_an a ->
       let buf = Dynarray.create () in

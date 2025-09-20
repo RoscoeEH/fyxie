@@ -91,7 +91,6 @@ and check_assignment tbinds assign =
 
 let rec check_top_level tbinds tl =
   match tl with
-  | TL_td _td -> return (tbinds, tl)
   | TL_an an -> check_assignment tbinds an >>| fun an ->
     let b = (an.lhs.v_id, an.rhs.tp) in
     (b::tbinds, TL_an an)
