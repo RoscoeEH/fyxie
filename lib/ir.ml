@@ -5,9 +5,9 @@ open List
 open Array
 
 open Name
-open Types.Basic
+open Types
 
-type type_t = Types.Basic.ty         (* limit to kind star *)
+type type_t = Types.ty         (* limit to kind star *)
 
 type domain =
   | Static
@@ -85,12 +85,11 @@ let mod_submods m =
 
 module PrettyPrint = struct
   open Util.Pretty
-  include Types.PrettyPrint
+         
+  let pp_type = Types.pp_type
             
   let pp_lit l = "{Literal " ^ string_of_int l.value ^ "}"
 
-  let pp_type = Types.PrettyPrint.pp_type 
-  
   let pp_domain d = match d with
     | Static -> "static"
     | Local -> "local"
@@ -351,15 +350,14 @@ let rec from_ast_assign ~domain ~ctx (an : Ast.assignment) =
     {lhs=var; rhs=expr'}
 
 and from_ast_expr ctx (expr : Ast.expr) = match expr with
-  | Lit i -> {tp=Types.Builtins.int_t; inner=Lit {value=i}}
+  | Lit i -> {tp=Types.int_t; inner=Lit {value=i}}
   | App (func, args) ->
     let func' = from_ast_expr ctx func in
     let args' = List.map (from_ast_expr ctx) args in
     let rec helper f_tp args =
-      let open Types.Builtins in
       match f_tp,args with
       | ret_t,[] -> ret_t
-      | Ta (Ta (app, _), f_rest), _::a_rest -> if app == arrow_t
+      | Ta (Ta (app, _), f_rest), _::a_rest -> if app == Types.arrow_t
         then helper f_rest a_rest
         else raise @@ Failure "Non-arrow type applied during function application"
       | _,_a::_a_rest -> raise @@ Failure "Too many arguments in application"
@@ -400,8 +398,7 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     let body' = mark_as_captured cap_vars_i @@ from_ast_expr ctx body in
     let a_tps = Array.of_list @@ List.map (fun v -> v.v_tp) args' in
     let f_tp =
-      let open Types.Builtins in
-      Array.fold_right (fun t acc -> (Ta (Ta (arrow_t, t), acc))) a_tps body'.tp
+      Array.fold_right (fun t acc -> (Ta (Ta (Types.arrow_t, t), acc))) a_tps body'.tp
     in
     let _ = restore ~dst:ctx ~src:prior_ctx in
     { tp=f_tp

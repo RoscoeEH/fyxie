@@ -6,7 +6,7 @@ open Result
 open Ast
 open Name
 
-open Types.Builtins
+open Types
 
 (* Converts strings to concrete tokens *)
 module Lex : sig
@@ -335,7 +335,7 @@ module Parse = struct
         (let* types = many parse_type >>| List.rev in
          match types with
          | _final :: (_penult :: _rest) ->
-           return @@ Typecheck.roll_ftp types
+           return @@ Types.roll_ftp types
          | _ -> fail "Function type with only one element")
     in
     ctx |> (base <|> func)

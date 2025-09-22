@@ -3,7 +3,7 @@ open Option
     
 open Name
 
-type type_t = Types.Basic.ty    (* kind star *)
+type type_t = Types.ty    (* kind star *)
 
 type binding = name * type_t
 
@@ -67,7 +67,7 @@ let mod_submods m =
 
 module PrettyPrint = struct
   open Util.Pretty
-  let pp_type = Types.PrettyPrint.pp_type
+  let pp_type = Types.pp_type
 
   let pp_binding (n, t) = pp_name n ^ " : " ^ pp_type t
 

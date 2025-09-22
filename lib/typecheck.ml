@@ -1,5 +1,5 @@
 
-open Types.Builtins
+open Types
 
 open Ir
 
@@ -8,20 +8,6 @@ type 'a r = ('a, string) Result.t
 
 let fail_msg str = Error str
 
-let rec unroll_ftp t =
-  match as_function t with
-  | Ok (a,b) ->
-    unroll_ftp b >>| fun rs -> a::rs
-  | Error _e ->
-    return [t]
-
-
-let roll_ftp tps = (* expects reversed list *)
-  match tps with
-  | [] -> raise @@ Failure "Can't roll empty list into function type"
-  | a::rs ->
-    List.fold_left (fun acc t ->
-        mk_function t acc) a rs
 
 let rec check_expr tbinds expr =
   match expr.inner with
