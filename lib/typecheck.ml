@@ -58,6 +58,43 @@ let rec check_expr tbinds expr =
     let* body' = check_expr (extension @ tbinds) lb.l_body in
     let lb' = {binds=binds'; l_body=body'} in
     return {tp=body'.tp; inner=Let lb'}
+  | Dec c ->
+    let* default' = begin match c.default with
+      | None -> Ok None
+      | Some e -> check_expr tbinds e >>| (fun x -> Some x)
+    end in
+    let* dec' = check_expr tbinds c.deconstruct in
+    let patterns' = Array.map (check_case tbinds) c.patterns in
+    let* patterns' = Util.sequence_arr patterns' in
+    let* () = 
+      if Array.length c.patterns = 0 &&
+         Option.is_none default'
+      then Error "Empty Case statement"
+      else return ()
+    in
+    let* dtn = begin match dec'.tp with
+      | Td (name,_) -> return name
+      | _ -> Error "Case on non-datatype"
+    end in
+    let* _ = Util.sequence_arr @@
+      Array.map (fun (p,_) ->
+          if p.dtype <> dtn
+          then Error "Pattern type doesn't match deconstructed data type"
+          else return ()
+        ) patterns'
+    in
+    let tp = begin match default' with
+      | None -> (Array.get patterns' 0) |> snd |> (fun x -> x.tp)
+      | Some x -> x.tp
+    end in
+    let consistent = Array.for_all (fun (_,x) -> eq_exact x.tp tp) patterns' in
+    let* () = 
+      if not consistent
+      then Error "Case arms differ in type"
+      else return ()
+    in
+    let inner = Dec { deconstruct = dec' ; patterns=patterns';default=default'} in
+    return {tp=tp;inner=inner }
   | Var v ->
     begin match List.assoc_opt v.v_id tbinds with
       | Some def_t ->
@@ -74,9 +111,16 @@ and check_assignment tbinds assign =
   let* tp = unify assign.lhs.v_tp rhs'.tp in
   let lhs' = {v_name=lhs.v_name; v_tp=tp; v_domain=lhs.v_domain; v_id=lhs.v_id} in
   return {lhs=lhs'; rhs=rhs'}
-
+and check_case tbinds (pat,arm) =
+    let new_binds =
+      Array.to_list pat.p_binds |>
+      List.filter_map (Option.map (fun v->(v.v_id, v.v_tp))) 
+    in
+    check_expr (new_binds @ tbinds) arm >>| (fun x -> (pat,x))
+      
 let rec check_top_level tbinds tl =
   match tl with
+  | TL_dt _d -> raise @@ Failure "TODO tl datatype"
   | TL_an an -> check_assignment tbinds an >>| fun an ->
     let b = (an.lhs.v_id, an.rhs.tp) in
     (b::tbinds, TL_an an)

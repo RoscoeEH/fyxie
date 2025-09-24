@@ -217,7 +217,17 @@ end = struct
    * 1 slot containing the size of the rest of the closure as an integer
    * N slots for the N closure values
    * code ptr
-  *)
+   *
+   * datatypes are represented by fixed size regions of N+1 slots
+   * where N is the maximum number of arguments in all the constructors.
+   * The first slot is the descriminant, which indicates which constructor was used
+   * the remaining slots are the args used for that constructor with possibly empty slots after.
+   *
+   * datatypes exist on the heap for now
+   *
+   * a case expression examines the desciminant to select an arm,
+   * binds any new variables and evaluates the appropriate arm, similar to a let block.
+   *)
   open BC
   open Tracker
 
@@ -249,11 +259,8 @@ end = struct
     | Static ->
       let* offset, size = ref_static v.v_id in
       begin match Types.stack_size v.v_tp with
-        (* TODO terrible hack, we need a better way to represent if
-           something is a boxed val (pointer to heap/static) or an
-           unboxed value. *)
-        | None -> return @@ push_lit ~is_ptr:true offset
-        | Some n ->
+        | Types.Heap _n -> return @@ push_lit ~is_ptr:true offset
+        | Types.Stack n ->
           if size <> n
           then raise @@ Failure "Type and static disagree in size"
           else if size <> 1 
@@ -326,6 +333,9 @@ end = struct
       let* () = emit (fetch_region_x_y 1) in                    (* copied rest of closure to stack,
                                                                  * consuming c. ptr *)
       emit call_x
+    | Dec _c ->
+      raise @@ Failure "TODO compile case"
+      
         
   and func_body_with_boilerplate f =
     let n_args = Array.length f.f_args in
@@ -369,6 +379,7 @@ end = struct
       let* () = tl_an_rhs_value buf a in
       def_static a.lhs.v_id buf
     | TL_m m -> compile_mod m
+    | TL_dt _d -> raise @@ Failure "TODO datatype"
 
   and compile_mod m =
     let seq acc tl = acc >>= fun _ -> compile_top_level tl in
@@ -380,7 +391,10 @@ end = struct
       match tl with
       | TL_an a ->
         let id = a.lhs.v_id in
-        let size = Types.stack_size a.lhs.v_tp |> Option.value ~default:1 in
+        let size = match Types.stack_size a.lhs.v_tp with
+          | Heap n -> n
+          | Stack n -> n
+        in
         let* x = acc in
         let* () = dec_static ~id ~size in
         return x

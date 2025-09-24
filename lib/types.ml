@@ -73,9 +73,10 @@ let roll_ftp tps = (* expects reversed list *)
 
 let rec eq_exact a b =
   match (a,b) with
-  | Tc _, Tc _ -> a == b
-  | Tg i, Tg j -> i == j
-  | Tv v, Tv w -> v == w
+  | Tc _, Tc _ -> a = b
+  | Tg i, Tg j -> i = j
+  | Tv v, Tv w -> v = w
+  | Td (na,_), Td (nb,_) -> na = nb
   | Ta (a1,a2), Ta (b1,b2) -> eq_exact a1 b1 && eq_exact a2 b2
   | _,_ -> false
 
@@ -173,7 +174,13 @@ let rec pp_kind k =
   | Kf (a,b) -> pp_kind a ^ " -> " ^ pp_kind b
 ;;
 
-let rec pp_type ?(_mods=[]) t =
+let rec pp_constructor c =
+  let open Util.Pretty in
+  pp_name c.c_name ^
+  (pp_arr ?sep:(Some " ") pp_type c.c_args) ^
+  " @ " ^ (string_of_int c.c_discrim)
+
+and pp_type ?(_mods=[]) t =
   match t with
   | Tc (n,k) ->
     pp_name n ^ "{kind " ^ pp_kind k ^ "}"
@@ -403,11 +410,21 @@ let entail_by_inst ce p =
  *     | Ok qs -> List.for_all (entail ce ps) qs
  *)
 
-(* returns None for boxed pointer, Some(n) for an unboxed value of n slots *)
+(* -1 means runtime sized *)
+type size =
+  | Stack of int
+  | Heap of int
+
 let rec datatype_size cons =
   let helper acc con =
     let size = Array.fold_left (fun acc t ->
-        let s = Option.value ~default:1 @@ stack_size t in
+        let s = match stack_size t with
+          | Heap _ -> 1
+          | Stack n ->
+            if n <> 1
+            then raise @@ Failure "unboxed type in datatype"
+            else 1
+        in
         acc + s) 0 con.c_args
     in
     Int.max acc size
@@ -417,9 +434,9 @@ let rec datatype_size cons =
 
 and stack_size t =
   match t with
-  | Td (_name,cons) -> Some(datatype_size cons)
+  | Td (_name, cons) -> Heap (datatype_size cons)
   | _ ->
     begin match as_function t with
-      | Ok _ -> None
-      | Error _ -> Some (1)
+      | Ok _ -> Heap (-1)
+      | Error _ -> Stack (1)
     end

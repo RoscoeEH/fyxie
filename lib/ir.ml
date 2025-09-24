@@ -22,6 +22,12 @@ type variable =
   ; v_id : int
   } 
 
+type pattern =
+  { dtype : name
+  ; matched : constructor
+  ; p_binds : variable option array
+  }
+
 type assignment =
   { lhs : variable
   ; rhs : expr
@@ -47,12 +53,19 @@ and literal =
   { value : int
   } 
 
+and case =
+  { deconstruct : expr
+  ; patterns : (pattern * expr) array
+  ; default : expr option
+  }
+
 and content =
   | Fun of func
   | Let of let_block
   | Var of variable
   | App of application
   | Lit of literal
+  | Dec of case
 
 and expr =
   { tp : type_t
@@ -63,6 +76,7 @@ type top_level =
   | TL_an of assignment
   | TL_ex of expr
   | TL_m of mod_t
+  | TL_dt of ty
 
 and mod_t =
   { mod_name : name_atom option
@@ -106,6 +120,17 @@ module PrettyPrint = struct
     ^ "}"
   ;;
 
+  let pp_pattern p =
+    let helper (v,t) =
+      match v with
+      | None -> ""
+      | Some (v) ->
+        pp_var v ^ " " ^ pp_type t
+    in
+    let z = Array.combine p.p_binds p.matched.c_args in
+    pp_constructor p.matched ^
+    (pp_arr helper z)
+  
   let rec pp_assignment a =
     pp_var a.lhs ^ " = " ^ pp_expr a.rhs
   and pp_func f =
@@ -123,6 +148,10 @@ module PrettyPrint = struct
   and pp_app a =
     Array.fold_left (fun acc e -> acc ^ pp_expr e ^ " ") ("( " ^ pp_expr a.func ^ " ") a.a_args
     ^ ")"
+  and pp_dec c =
+    let arm (p,e) = pp_pattern p ^ " -> " ^ pp_expr e in
+    "case " ^ pp_expr c.deconstruct ^ " of " ^
+    (pp_arr ?sep:(Some "\n") arm c.patterns) 
   and pp_expr e =
     let s =
       match e.inner with
@@ -131,6 +160,7 @@ module PrettyPrint = struct
       | Var v -> pp_var v
       | App a -> pp_app a
       | Lit l -> pp_lit l
+      | Dec c -> pp_dec c
     in
     "{" ^ s ^ " : " ^ pp_type e.tp ^ "}"
   ;;
@@ -148,6 +178,7 @@ module PrettyPrint = struct
     | TL_an a -> pp_assignment a
     | TL_ex e -> pp_expr e
     | TL_m m -> pp_mod m
+    | TL_dt d -> pp_type d
     (*
      * | _ -> raise @@ Failure "top level td not supported"
      *)
@@ -184,6 +215,18 @@ let collect_captures args body =
     | Ast.Fun (binds, inner) ->
       let shadowed_names = List.map (fun (b, _tp) -> b) binds in
       cc1 (List.append shadowed_names ignores) inner
+    | Ast.Dec (decon, cases, default) ->
+      cc1 ignores decon;
+      let _ = Option.map (cc1 ignores) default in
+      let _ = cases |> List.map (fun ((pat : Ast.pattern),arm) ->
+          let names = List.concat_map (fun n_opt ->
+              Option.to_list n_opt 
+            ) pat.p_binds
+          in
+          cc1 (names @ ignores) arm
+        )
+      in
+      ()
   in
   cc1 args body;
   !captures
@@ -214,6 +257,24 @@ let rec mark_as_captured (targets : (variable * int) list) body =
                      ; v_domain=Closure (* the point of this function *)
                      ; v_id=v.v_id }}
     else { tp=body.tp; inner=Var v}
+  | Dec case ->
+    let dec = mark_as_captured targets case.deconstruct in
+    let arm_helper (pat, body) =
+      let t2 = Array.fold_left (fun lst t_opt -> match t_opt with
+          | None -> lst
+          | Some t -> remove lst t) targets pat.p_binds
+      in
+      (pat, mark_as_captured t2 body)
+    in
+    let pats = Array.map arm_helper case.patterns in
+    let default = Option.map (mark_as_captured targets) case.default in
+    { tp = body.tp
+    ; inner =
+        Dec { deconstruct = dec
+            ; patterns = pats
+            ; default = default
+            }
+    }
 ;;
 
 let rec refs_allow_static ?(ignore=[]) body =
@@ -223,6 +284,14 @@ let rec refs_allow_static ?(ignore=[]) body =
   | Fun f -> refs_allow_static ~ignore f.f_body
   | Let l ->
     refs_allow_static ~ignore:((Array.map (fun b->b.lhs) l.binds |> Array.to_list) @ ignore) l.l_body
+  | Dec c ->
+    Array.for_all (fun (pat, arm) ->
+        let ig2 = Array.to_list pat.p_binds |>
+                  List.concat_map (Option.to_list) |>
+                  fun additions -> additions @ ignore
+        in
+        refs_allow_static ~ignore:ig2 arm
+      ) c.patterns
   | Var v -> 
     List.mem v ignore || v.v_domain = Arg || v.v_domain = Static
   | App a ->
@@ -405,6 +474,50 @@ and from_ast_expr ctx (expr : Ast.expr) = match expr with
     ; inner=Fun { f_args=Array.of_list args'
                 ; captures=Array.of_list cap_vars
                 ; f_body=body'}}
+  | Dec (deconstruct, cases, default) ->
+    let lift_pattern (pat : Ast.pattern) =
+      let types = pat.matched.c_args in
+      let p_binds' = 
+        if Array.length types < List.length pat.p_binds
+        then raise @@ Failure ("Pattern doesn't match number of types in constructor " ^ pp_name pat.matched.c_name)
+        else
+          let name_type_to_var name c_type =
+            Option.map (fun n -> insert ctx n c_type Local) name
+          in
+          Array.map2 name_type_to_var (Array.of_list pat.p_binds) types
+      in
+      { dtype = pat.dtype
+      ; matched = pat.matched
+      ; p_binds = p_binds' }
+    in
+    let dec' = from_ast_expr ctx deconstruct in
+    let arms' = cases |> List.map (fun (pat,arm) ->
+        let prior = save ctx in
+        let pat' = lift_pattern pat in
+        let arm' = from_ast_expr ctx arm in
+        let () = restore ~dst:ctx ~src:prior in
+        (pat',arm')
+      ) |> Array.of_list
+    in
+    let default' = Option.map (from_ast_expr ctx) default in
+    let tp =
+      let pt = if Array.length arms' = 0
+        then None
+        else Some ((snd (Array.get arms' 0)).tp)
+      in
+      match pt,(Option.map (fun x -> x.tp) default') with
+      | None,None -> raise @@ Failure "Empty case statement?"
+      | Some tp, _ | None, Some tp -> tp
+    in
+    let inner =
+      Dec { deconstruct = dec'
+          ; patterns = arms'
+          ; default = default'
+          }
+    in
+    { tp = tp
+    ; inner = inner
+    }
 ;;
 
 let tl_assign ~domain ~ctx (an : Ast.assignment) =
@@ -451,6 +564,9 @@ let rec from_ast_top_level ctx tl = match tl with
   | Ast.TL_m m ->
     let m' = from_ast_mod ctx m in
     TL_m m'
+  | Ast.TL_dt d ->
+    (* TODO ? ensure anything here *)
+    TL_dt d
 
 and from_ast_mod ctx (m : Ast.mod_t) =
   let p_mod = ctx.current_mod in
