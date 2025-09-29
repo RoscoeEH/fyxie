@@ -192,71 +192,73 @@ module Interpreter = struct
       | Op o -> o
     in
     print_endline @@ "Executing " ^ pp_op op ^ " @ pc: " ^ string_of_int !pc;
+    begin match op with
+      | PushLit l ->
+        push l;
+        inc_pc ()
+      | ResStack s ->
+        sp := !sp - s;
+        inc_pc ()
+      | FetchSp n ->
+        let v = !mem.(!sp + n + 1) in
+        push v;
+        inc_pc ()
+      | SetSp n ->
+        let x = !mem.(!sp + 1) in
+        !mem.(!sp + 1 + n) <- x;
+        pop ();
+        inc_pc ()
+      | Swap ->
+        let hold = !mem.(!sp + 1) in
+        !mem.(!sp + 1) <- !mem.(!sp + 2);
+        !mem.(!sp + 2) <- hold;
+        inc_pc ()
+      | Drop n ->
+        sp := !sp + n;
+        inc_pc ()
+      | Alloc n ->
+        let h = bump_maybe_gc n in
+        push (from_int_as_ptr h);
+        inc_pc ()
+      | Fetch n ->
+        let x = ptr_or_fail @@ !mem.(!sp + 1) in
+        !mem.(!sp + 1) <- !mem.(x + n);
+        inc_pc ()
+      | FetchRegion n ->
+        let x = ptr_or_fail @@ !mem.(!sp + 2) in
+        let y = int_or_fail @@ !mem.(!sp + 1) in
+        sp := !sp + 2;
+        for i = x + n to x + n + y - 1 do
+          push !mem.(i)
+        done;
+        inc_pc ()
+      | FetchSize (x, n) ->
+        for i = x to x + n - 1 do
+          push !mem.(i)
+        done;
+        inc_pc ()
+      | Set n ->
+        let v = !mem.(!sp + 1) in
+        let x = ptr_or_fail @@ !mem.(!sp + 2) in
+        sp := !sp + 2;
+        !mem.(x + n) <- v;
+        inc_pc ()
+      | Call ->
+        let x = int_or_fail @@ !mem.(!sp + 1) in
+        inc_pc ();
+        !mem.(!sp + 1) <- from_int_as_num !pc;
+        pc := x
+      | Ret ->
+        let x = int_or_fail !mem.(!sp + 1) in
+        pop ();
+        pc := x
+      | Jump n ->
+        inc_pc ();
+        pc := !pc + n
+    end; 
     print_endline "Stack:";
     print_endline @@ pp_stack ();
-    match op with
-    | PushLit l ->
-      push l;
-      inc_pc ()
-    | ResStack s ->
-      sp := !sp - s;
-      inc_pc ()
-    | FetchSp n ->
-      let v = !mem.(!sp + n + 1) in
-      push v;
-      inc_pc ()
-    | SetSp n ->
-      let x = !mem.(!sp + 1) in
-      !mem.(!sp + 1 + n) <- x;
-      pop ();
-      inc_pc ()
-    | Swap ->
-      let hold = !mem.(!sp + 1) in
-      !mem.(!sp + 1) <- !mem.(!sp + 2);
-      !mem.(!sp + 2) <- hold;
-      inc_pc ()
-    | Drop n ->
-      sp := !sp + n;
-      inc_pc ()
-    | Alloc n ->
-      let h = bump_maybe_gc n in
-      push (from_int_as_ptr h);
-      inc_pc ()
-    | Fetch n ->
-      let x = ptr_or_fail @@ !mem.(!sp + 1) in
-      !mem.(!sp + 1) <- !mem.(x + n);
-      inc_pc ()
-    | FetchRegion n ->
-      let x = ptr_or_fail @@ !mem.(!sp + 2) in
-      let y = int_or_fail @@ !mem.(!sp + 1) in
-      sp := !sp + 2;
-      for i = x + n to x + n + y - 1 do
-        push !mem.(i)
-      done;
-      inc_pc ()
-    | FetchSize (x, n) ->
-      for i = x to x + n - 1 do
-        push !mem.(i)
-      done;
-      inc_pc ()
-    | Set n ->
-      let v = !mem.(!sp + 1) in
-      let x = ptr_or_fail @@ !mem.(!sp + 2) in
-      sp := !sp + 2;
-      !mem.(x + n) <- v;
-      inc_pc ()
-    | Call ->
-      let x = int_or_fail @@ !mem.(!sp + 1) in
-      inc_pc ();
-      !mem.(!sp + 1) <- from_int_as_num !pc;
-      pc := x
-    | Ret ->
-      let x = int_or_fail !mem.(!sp + 1) in
-      pop ();
-      pc := x
-    | Jump n ->
-      inc_pc ();
-      pc := !pc + n
+
   ;;
 
   let rec run_until_reached ~final =
