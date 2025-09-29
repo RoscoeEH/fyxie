@@ -1,11 +1,41 @@
 mod T {
-    mod X {
-        a:Int=0;
-    };
-    a:Int = 1;
-    a;
-    X_a;
-    T_a;
-    T_X_a;
+    111;
+    222;
+    333;
+    444;
+
+    ? ( fst   : (Int Int Int) = \ x:Int y:Int . x ) .
+        ? ( const : (Int Int) = \ y:Int . (fst 2 y) ) .
+            ( const 10 ) ;
+
 }
+
+ANYTHING AFTER THE FIRST MODULE IS IGNORED
+TESTING SCRATCH SPACE
+
+mod X {
+a:Int=0;
+};
+a:Int = 1;
+a;
+X_a;
+T_a;
+T_X_a;
+111;
+
+const:(Int Int) = \x:Int . 2;
+(const 4);
+
+? (a:Int = (const 5)) .
+? (b:Int = 6) .
+(const 7);
+222;
+
+? (a:Int = 8) .
+? (b:(Int Int) = \x:Int . a) .
+(const 9);
+333;
+
+
+
 

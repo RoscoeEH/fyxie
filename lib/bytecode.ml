@@ -37,7 +37,7 @@ module BC = struct
     | FetchSp _ -> some 1
     | SetSp _ -> some (-1)
     | Swap -> some 0
-    | Drop i -> some i
+    | Drop i -> some (-i)
     | Alloc _ -> some 1
     | Fetch _ -> some 0
     | FetchRegion _ -> none

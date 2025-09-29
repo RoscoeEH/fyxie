@@ -151,34 +151,36 @@ module Tracker : CompTracker
    * the out of line block that will be jumped to by the current
    * computation line. *)
   let out_of_line func m = fun ctx ->
-    let adjust_code_offset ctx =
-      (), { code_offset=ctx.code_offset - 1
-          ; stack_offset=ctx.stack_offset
-          ; target = ctx.target
-          ; statics = ctx.statics
-          ; static_map = ctx.static_map
-          ; next_static = ctx.next_static
-          ; in_func = ctx.in_func
+    print_endline @@ "ool offset: " ^ string_of_int ctx.code_offset;
+    let adjust_code_offset size ctx =
+      (), { code_offset  = ctx.code_offset + size
+          ; stack_offset = ctx.stack_offset
+          ; target       = ctx.target
+          ; statics      = ctx.statics
+          ; static_map   = ctx.static_map
+          ; next_static  = ctx.next_static
+          ; in_func      = ctx.in_func
           }
     in
     let inner_target = Dynarray.create () in
     let inner_ctx =
-      { code_offset = ctx.code_offset + 1
+      { code_offset  = ctx.code_offset + 1
       ; stack_offset = 0
-      ; target = inner_target
-      ; statics = ctx.statics
-      ; static_map = ctx.static_map
-      ; next_static = ctx.next_static
-      ; in_func=(Some func)
+      ; target       = inner_target
+      ; statics      = ctx.statics
+      ; static_map   = ctx.static_map
+      ; next_static  = ctx.next_static
+      ; in_func      = Some func
       }
     in
     let v, inner_ctx2 = m inner_ctx in
-    let inner_ptr = length ctx.target + ctx.code_offset + 1 in
+    let inner_ptr = ctx.code_offset + 1 in
     let jump_offset = length inner_ctx2.target in
     ctx |> (let* () = emit (BC.jump jump_offset) in
             append ctx.target inner_target;
-            let* () = adjust_code_offset in
+            let* () = adjust_code_offset @@ Dynarray.length inner_target in
             (* NOTE not sure why we need this adjustment. Something about the jump being counted twice? *)
+            print_endline @@ "Code ptr: " ^ string_of_int inner_ptr;
             return (v, inner_ptr))
   ;;
 end
@@ -238,9 +240,30 @@ end = struct
   ;;
 
   let var_fetch v =
-    (* Idea here is that stack_offset trackes changes inside the body,
+    (* Idea here is that stack_offset tracks changes inside the body,
      * but you have to do offset for captures and args yourself
-     * since they are populated by the caller *)
+     * since they are populated by the caller
+     *
+     * so `stack_offset` gives you the number of items added to the
+     * stack since the function call / or from the top level call.
+     *
+     * Top level case:
+     * ------------ stack offset zero line
+     * local 0
+     * local 1
+     * ------------ stack top
+     *
+     * Function case:
+     * ------------ ^ caller body, unknown to callee
+     * arg 0
+     * arg 1
+     * capture 0
+     * capture 1
+     * ------------ stack offset zero line
+     * local 0
+     * local 1
+     * ------------ stack top
+     *)
     let* in_func = enclosing_func in
     let n_args = Option.map (fun f -> Array.length f.f_args) in_func in
     let n_caps = Option.map (fun f -> Array.length f.captures) in_func in
@@ -265,15 +288,23 @@ end = struct
                      ^ " n_caps " ^ string_of_int (Option.get n_caps)
                     ^ " off " ^ string_of_int off
                     ^ " v_id " ^ string_of_int v.v_id);
-      return @@ fetch_stack @@ (Option.get n_args) + (Option.get n_caps) + off - v.v_id - 1
+      let sp_index = (Option.get n_args) + (Option.get n_caps) + off - v.v_id in
+      print_endline @@ "sp_index arg: " ^ string_of_int sp_index;
+      return @@ fetch_stack sp_index
     | Closure ->
       (* captures are below args *)
       let* off = stack_offset in
-      return @@ fetch_stack @@ off - (Option.get n_caps) - v.v_id - 1
+      let sp_index = off - (Option.get n_caps) - v.v_id in
+      print_endline @@ "sp_index cap: " ^ string_of_int sp_index;
+      return @@ fetch_stack sp_index
     | Local ->
       (* locals are below both args and captures *)
       let* off = stack_offset in
-      return @@ fetch_stack @@ off - v.v_id
+      let sp_index = off - v.v_id - 1 in
+      print_endline ("off " ^ string_of_int off
+                     ^ " v_id " ^ string_of_int v.v_id);
+      print_endline @@ "sp_index loc: " ^ string_of_int sp_index;
+      return @@ fetch_stack sp_index
   ;;
 
   let emit_freeze () = emit @@ jump (-1)
@@ -295,6 +326,9 @@ end = struct
       let* () = emit (set_stack_x n_binds) in
       emit (drop (n_binds - 1))
     | Fun f ->
+      let* off = stack_offset in
+      print_endline @@ "func " ^
+                       " off " ^ string_of_int off;
       let n_caps = Array.length f.captures in
       let* () = emit (alloc (2 + n_caps)) in
       let* () = emit (fetch_stack 0) in
@@ -303,6 +337,8 @@ end = struct
       let* ptr_off = stack_offset in
       let populate_captures i v _acc =
         let* off = stack_offset in
+        print_endline @@ "popc " ^ string_of_int i ^
+                         " off " ^ string_of_int off;
         let* () = emit (fetch_stack (off - ptr_off)) in         (* copied closure ptr to top *)
         let* var = var_fetch v in
         let* () = emit var in                                   (* copied closure val to top *)
@@ -310,10 +346,15 @@ end = struct
         return ()
       in
       let* () = fold_left_mi populate_captures (return ()) f.captures in
+      let* off = stack_offset in
+      print_endline @@ "pop captures done off " ^ string_of_int off;
       let* _, code_ptr = out_of_line f (func_body_with_boilerplate f) in
       let* () = emit (fetch_stack 0) in                         (* dup'd closure ptr *)
       let* () = emit (push_lit code_ptr) in                     (* pushed func body code ptr to stack *)
-      emit (set_x_y (n_caps+1))                                 (* wrote code ptr to closure *)
+      let* () = emit (set_x_y (n_caps+1)) in                                 (* wrote code ptr to closure *)
+      let* off = stack_offset in
+      print_endline @@ "end func off " ^ string_of_int off;
+      return ()
     | App a ->
       let arg_helper _i arg _acc = compile arg in
       let* () = emit (reserve_stack 2) in
@@ -362,7 +403,10 @@ end = struct
   let rec compile_top_level tl =
     match tl with
     | TL_td _ -> raise @@ Failure "Typedefs should be resolved before compilation"
-    | TL_ex e -> compile e
+    | TL_ex e ->
+      let* off = stack_offset in
+      let* () = adjust_stack_offset ((-1) * off) in
+      compile e
     | TL_an a ->
       let buf = Dynarray.create () in
       let* () = tl_an_rhs_value buf a in
