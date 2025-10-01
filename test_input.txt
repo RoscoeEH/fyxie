@@ -4,14 +4,19 @@ mod T {
     333;
     444;
 
-    ? ( fst   : (Int Int Int) = \ x:Int y:Int . x ) .
-        ? ( const : (Int Int) = \ y:Int . (fst 2 y) ) .
-            ( const 10 ) ;
-
+? ( fst   : (Int Int Int) = \ x:Int y:Int . x ) .
+? ( const : (Int Int) = \ y:Int . (fst 2 y) ) .
+( const 10 ) ;
+    
 }
 
 ANYTHING AFTER THE FIRST MODULE IS IGNORED
 TESTING SCRATCH SPACE
+
+fst:(Int Int Int) = \x:Int y:Int . x;
+? ( const : (Int Int) = \ y:Int . (fst 2 y) ) .
+( const 10 ) ;
+
 
 mod X {
 a:Int=0;

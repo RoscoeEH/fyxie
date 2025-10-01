@@ -163,9 +163,11 @@ module Tracker : CompTracker
           }
     in
     let inner_target = Dynarray.create () in
+    let n_caps = Array.length func.captures in
+    let n_args = Array.length func.f_args in
     let inner_ctx =
       { code_offset  = ctx.code_offset + 1
-      ; stack_offset = 0
+      ; stack_offset = n_caps + n_args
       ; target       = inner_target
       ; statics      = ctx.statics
       ; static_map   = ctx.static_map
@@ -240,12 +242,7 @@ end = struct
   ;;
 
   let var_fetch v =
-    (* Idea here is that stack_offset tracks changes inside the body,
-     * but you have to do offset for captures and args yourself
-     * since they are populated by the caller
-     *
-     * so `stack_offset` gives you the number of items added to the
-     * stack since the function call / or from the top level call.
+    (* Idea here is that stack_offset tracks changes inside the body
      *
      * Top level case:
      * ------------ stack offset zero line
@@ -255,11 +252,14 @@ end = struct
      *
      * Function case:
      * ------------ ^ caller body, unknown to callee
+     * return value slot
+     * return address
+     * ------------ ^ callee reserved zone
+     * ------------ stack offset zero line
      * arg 0
      * arg 1
      * capture 0
      * capture 1
-     * ------------ stack offset zero line
      * local 0
      * local 1
      * ------------ stack top
@@ -288,19 +288,19 @@ end = struct
                      ^ " n_caps " ^ string_of_int (Option.get n_caps)
                     ^ " off " ^ string_of_int off
                     ^ " v_id " ^ string_of_int v.v_id);
-      let sp_index = (Option.get n_args) + (Option.get n_caps) + off - v.v_id in
+      let sp_index = off - v.v_id - 1 in
       print_endline @@ "sp_index arg: " ^ string_of_int sp_index;
       return @@ fetch_stack sp_index
     | Closure ->
       (* captures are below args *)
       let* off = stack_offset in
-      let sp_index = off - (Option.get n_caps) - v.v_id in
+      let sp_index = off - (Option.get n_args) - v.v_id - 1 in
       print_endline @@ "sp_index cap: " ^ string_of_int sp_index;
       return @@ fetch_stack sp_index
     | Local ->
       (* locals are below both args and captures *)
       let* off = stack_offset in
-      let sp_index = off - v.v_id - 1 in
+      let sp_index = off - (Option.value ~default:0 n_args) - (Option.value ~default:0 n_caps) - v.v_id - 1 in
       print_endline ("off " ^ string_of_int off
                      ^ " v_id " ^ string_of_int v.v_id);
       print_endline @@ "sp_index loc: " ^ string_of_int sp_index;
