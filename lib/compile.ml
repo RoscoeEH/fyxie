@@ -275,11 +275,11 @@ end = struct
         (* TODO terrible hack, we need a better way to represent if
            something is a boxed val (pointer to heap/static) or an
            unboxed value. *)
-        | Fun_t (_, _) -> return @@ push_lit ~is_ptr:true offset
+        | Fun_t (_, _) -> emit @@ push_lit ~is_ptr:true offset
         | _ ->
           if size <> 1
           then raise @@ Failure "Static fetchs of >1 size not supported"
-          else return @@ fetch_size offset 1
+          else emit @@ fetch_size offset 1
       end 
     | Arg ->
       (* args are at the top of the function frame *)
@@ -290,13 +290,13 @@ end = struct
                     ^ " v_id " ^ string_of_int v.v_id);
       let sp_index = off - v.v_id - 1 in
       print_endline @@ "sp_index arg: " ^ string_of_int sp_index;
-      return @@ fetch_stack sp_index
+      emit @@ fetch_stack sp_index
     | Closure ->
       (* captures are below args *)
       let* off = stack_offset in
       let sp_index = off - (Option.get n_args) - v.v_id - 1 in
       print_endline @@ "sp_index cap: " ^ string_of_int sp_index;
-      return @@ fetch_stack sp_index
+      emit @@ fetch_stack sp_index
     | Local ->
       (* locals are below both args and captures *)
       let* off = stack_offset in
@@ -304,7 +304,7 @@ end = struct
       print_endline ("off " ^ string_of_int off
                      ^ " v_id " ^ string_of_int v.v_id);
       print_endline @@ "sp_index loc: " ^ string_of_int sp_index;
-      return @@ fetch_stack sp_index
+      emit @@ fetch_stack sp_index
   ;;
 
   let emit_freeze () = emit @@ jump (-1)
@@ -317,7 +317,7 @@ end = struct
   let rec compile expr =
     match expr.inner with
     | Lit l -> emit @@ push_lit l.value
-    | Var v -> var_fetch v >>= emit
+    | Var v -> var_fetch v
     | Let l ->
       let n_binds = Array.length l.binds in
       let arm_helper _i an _acc = compile an.rhs in
@@ -340,8 +340,7 @@ end = struct
         print_endline @@ "popc " ^ string_of_int i ^
                          " off " ^ string_of_int off;
         let* () = emit (fetch_stack (off - ptr_off)) in         (* copied closure ptr to top *)
-        let* var = var_fetch v in
-        let* () = emit var in                                   (* copied closure val to top *)
+        let* () = var_fetch v in                                (* copied closure val to top *)
         let* () = emit (set_x_y (i + 1)) in                     (* wrote captured val to heap closure *)
         return ()
       in
